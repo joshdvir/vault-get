@@ -16,7 +16,7 @@ The help section explains everything:
 
 ```
 NAME:
-   vault-get - Get a value fron Vault
+   vault-get - Get a value from Vault
 
 USAGE:
    vault-get [global options] command [command options] [arguments...]
