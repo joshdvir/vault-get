@@ -1,0 +1,12 @@
+vault-get:
+  build: .
+  command: tail -f /dev/null
+  dockerfile: Dockerfile.drone
+  volumes:
+    - .:/go/src/vault-get/
+  ports:
+    - "9292:9292"
+    - "2345:2345"
+  expose:
+    - "2345"
+    - "9292"

@@ -1,0 +1,20 @@
+pipeline:
+  build:
+    image: golang:1.8
+    pull: true
+    environment:
+      - VERSION=0.5.0
+    commands:
+      - mkdir /drone/bin
+      - mkdir -p prod
+      - mkdir -p dist
+      - curl https://glide.sh/get | sh
+      - go get github.com/mitchellh/gox
+      - go get github.com/tcnksm/ghr
+      - glide install
+      - glide update
+      - gox -osarch-list
+      - CGO_ENABLED=0 gox -output "dist/vault-get-{{.OS}}-{{.Arch}}"
+      - ghr -t $GITHUB_TOKEN -u devops-israel -r vault-get --replace v$VERSION dist/
+      - cp Dockerfile prod/
+      - cp dist/vault-get-linux-amd64 prod/

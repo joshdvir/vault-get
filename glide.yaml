@@ -1,0 +1,4 @@
+package: .
+import:
+  - package: github.com/urfave/cli
+  - package: github.com/hashicorp/vault/api
