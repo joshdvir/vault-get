@@ -5,7 +5,6 @@ import (
 	"crypto/rsa"
 	"encoding/gob"
 	"fmt"
-	"time"
 
 	"sync"
 
@@ -20,7 +19,6 @@ import (
 func init() {
 	gob.Register(rsa.PublicKey{})
 	gob.Register(ecdsa.PublicKey{})
-	gob.Register(time.Duration(0))
 }
 
 // BackendPluginClient is a wrapper around backendPluginClient
@@ -42,9 +40,8 @@ func (b *BackendPluginClient) Cleanup() {
 
 // NewBackend will return an instance of an RPC-based client implementation of the backend for
 // external plugins, or a concrete implementation of the backend if it is a builtin backend.
-// The backend is returned as a logical.Backend interface. The isMetadataMode param determines whether
-// the plugin should run in metadata mode.
-func NewBackend(pluginName string, sys pluginutil.LookRunnerUtil, logger log.Logger, isMetadataMode bool) (logical.Backend, error) {
+// The backend is returned as a logical.Backend interface.
+func NewBackend(pluginName string, sys pluginutil.LookRunnerUtil, logger log.Logger) (logical.Backend, error) {
 	// Look for plugin in the plugin catalog
 	pluginRunner, err := sys.LookupPlugin(pluginName)
 	if err != nil {
@@ -68,7 +65,7 @@ func NewBackend(pluginName string, sys pluginutil.LookRunnerUtil, logger log.Log
 
 	} else {
 		// create a backendPluginClient instance
-		backend, err = newPluginClient(sys, pluginRunner, logger, isMetadataMode)
+		backend, err = newPluginClient(sys, pluginRunner, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -77,21 +74,12 @@ func NewBackend(pluginName string, sys pluginutil.LookRunnerUtil, logger log.Log
 	return backend, nil
 }
 
-func newPluginClient(sys pluginutil.RunnerUtil, pluginRunner *pluginutil.PluginRunner, logger log.Logger, isMetadataMode bool) (logical.Backend, error) {
+func newPluginClient(sys pluginutil.RunnerUtil, pluginRunner *pluginutil.PluginRunner, logger log.Logger) (logical.Backend, error) {
 	// pluginMap is the map of plugins we can dispense.
 	pluginMap := map[string]plugin.Plugin{
-		"backend": &BackendPlugin{
-			metadataMode: isMetadataMode,
-		},
+		"backend": &BackendPlugin{},
 	}
-
-	var client *plugin.Client
-	var err error
-	if isMetadataMode {
-		client, err = pluginRunner.RunMetadataMode(sys, pluginMap, handshakeConfig, []string{}, logger)
-	} else {
-		client, err = pluginRunner.Run(sys, pluginMap, handshakeConfig, []string{}, logger)
-	}
+	client, err := pluginRunner.Run(sys, pluginMap, handshakeConfig, []string{}, logger)
 	if err != nil {
 		return nil, err
 	}

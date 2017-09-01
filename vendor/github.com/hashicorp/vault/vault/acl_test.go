@@ -453,7 +453,7 @@ path "auth/token/create*" {
 `
 
 var aclPolicy = `
-name = "DeV"
+name = "dev"
 path "dev/*" {
 	policy = "sudo"
 }
@@ -482,7 +482,7 @@ path "foo/bar" {
 `
 
 var aclPolicy2 = `
-name = "OpS"
+name = "ops"
 path "dev/hide/*" {
 	policy = "deny"
 }

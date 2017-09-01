@@ -10,7 +10,7 @@ import (
 
 type CLIHandler struct{}
 
-func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, error) {
+func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (string, error) {
 	mount, ok := m["mount"]
 	if !ok {
 		mount = "github"
@@ -19,7 +19,7 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 	token, ok := m["token"]
 	if !ok {
 		if token = os.Getenv("VAULT_AUTH_GITHUB_TOKEN"); token == "" {
-			return nil, fmt.Errorf("GitHub token should be provided either as 'value' for 'token' key,\nor via an env var VAULT_AUTH_GITHUB_TOKEN")
+			return "", fmt.Errorf("GitHub token should be provided either as 'value' for 'token' key,\nor via an env var VAULT_AUTH_GITHUB_TOKEN")
 		}
 	}
 
@@ -28,13 +28,13 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 		"token": token,
 	})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if secret == nil {
-		return nil, fmt.Errorf("empty response from credential provider")
+		return "", fmt.Errorf("empty response from credential provider")
 	}
 
-	return secret, nil
+	return secret.Auth.ClientToken, nil
 }
 
 func (h *CLIHandler) Help() string {

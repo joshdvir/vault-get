@@ -35,7 +35,7 @@ func pathRoles(b *backend) *framework.Path {
 			},
 
 			"ttl": &framework.FieldSchema{
-				Type:    framework.TypeDurationSecond,
+				Type:    framework.TypeString,
 				Default: "",
 				Description: `The lease duration if no specific lease duration is
 requested. The lease duration controls the expiration
@@ -383,7 +383,7 @@ func (b *backend) pathRoleCreate(
 
 	entry := &roleEntry{
 		MaxTTL:              data.Get("max_ttl").(string),
-		TTL:                 (time.Duration(data.Get("ttl").(int)) * time.Second).String(),
+		TTL:                 data.Get("ttl").(string),
 		AllowLocalhost:      data.Get("allow_localhost").(bool),
 		AllowedDomains:      data.Get("allowed_domains").(string),
 		AllowBareDomains:    data.Get("allow_bare_domains").(bool),

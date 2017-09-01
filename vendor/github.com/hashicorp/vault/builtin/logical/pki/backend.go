@@ -42,7 +42,6 @@ func Backend() *backend {
 
 			Root: []string{
 				"root",
-				"root/sign-self-issued",
 			},
 		},
 
@@ -51,7 +50,6 @@ func Backend() *backend {
 			pathRoles(&b),
 			pathGenerateRoot(&b),
 			pathSignIntermediate(&b),
-			pathSignSelfIssued(&b),
 			pathDeleteRoot(&b),
 			pathGenerateIntermediate(&b),
 			pathSetSignedIntermediate(&b),

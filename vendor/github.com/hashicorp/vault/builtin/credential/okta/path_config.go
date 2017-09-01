@@ -3,14 +3,11 @@ package okta
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
-	"time"
-
-	"github.com/chrismalek/oktasdk-go/okta"
-	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
+	"github.com/sstarcher/go-okta"
+	"time"
 )
 
 func pathConfig(b *backend) *framework.Path {
@@ -19,29 +16,16 @@ func pathConfig(b *backend) *framework.Path {
 		Fields: map[string]*framework.FieldSchema{
 			"organization": &framework.FieldSchema{
 				Type:        framework.TypeString,
-				Description: "Okta organization to authenticate against (DEPRECATED)",
-			},
-			"org_name": &framework.FieldSchema{
-				Type:        framework.TypeString,
-				Description: "Name of the organization to be used in the Okta API.",
+				Description: "Okta organization to authenticate against",
 			},
 			"token": &framework.FieldSchema{
 				Type:        framework.TypeString,
-				Description: "Okta admin API token (DEPRECATED)",
-			},
-			"api_token": &framework.FieldSchema{
-				Type:        framework.TypeString,
-				Description: "Okta API key.",
+				Description: "Okta admin API token",
 			},
 			"base_url": &framework.FieldSchema{
 				Type: framework.TypeString,
 				Description: `The API endpoint to use. Useful if you
-are using Okta development accounts. (DEPRECATED)`,
-			},
-			"production": &framework.FieldSchema{
-				Type:        framework.TypeBool,
-				Default:     true,
-				Description: `If set, production API URL prefix will be used to communicate with Okta and if not set, a preview production API URL prefix will be used. Defaults to true.`,
+are using Okta development accounts.`,
 			},
 			"ttl": &framework.FieldSchema{
 				Type:        framework.TypeDurationSecond,
@@ -99,14 +83,10 @@ func (b *backend) pathConfigRead(
 	resp := &logical.Response{
 		Data: map[string]interface{}{
 			"organization": cfg.Org,
-			"org_name":     cfg.Org,
-			"production":   *cfg.Production,
+			"base_url":     cfg.BaseURL,
 			"ttl":          cfg.TTL,
 			"max_ttl":      cfg.MaxTTL,
 		},
-	}
-	if cfg.BaseURL != "" {
-		resp.Data["base_url"] = cfg.BaseURL
 	}
 
 	return resp, nil
@@ -114,6 +94,7 @@ func (b *backend) pathConfigRead(
 
 func (b *backend) pathConfigWrite(
 	req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	org := d.Get("organization").(string)
 	cfg, err := b.Config(req.Storage)
 	if err != nil {
 		return nil, err
@@ -122,35 +103,16 @@ func (b *backend) pathConfigWrite(
 	// Due to the existence check, entry will only be nil if it's a create
 	// operation, so just create a new one
 	if cfg == nil {
-		cfg = &ConfigEntry{}
-	}
-
-	org, ok := d.GetOk("org_name")
-	if ok {
-		cfg.Org = org.(string)
-	}
-	if cfg.Org == "" {
-		org, ok = d.GetOk("organization")
-		if ok {
-			cfg.Org = org.(string)
+		cfg = &ConfigEntry{
+			Org: org,
 		}
 	}
-	if cfg.Org == "" && req.Operation == logical.CreateOperation {
-		return logical.ErrorResponse("org_name is missing"), nil
-	}
 
-	token, ok := d.GetOk("api_token")
+	token, ok := d.GetOk("token")
 	if ok {
 		cfg.Token = token.(string)
-	}
-	if cfg.Token == "" {
-		token, ok = d.GetOk("token")
-		if ok {
-			cfg.Token = token.(string)
-		}
-	}
-	if cfg.Token == "" && req.Operation == logical.CreateOperation {
-		return logical.ErrorResponse("api_token is missing"), nil
+	} else if req.Operation == logical.CreateOperation {
+		cfg.Token = d.Get("token").(string)
 	}
 
 	baseURL, ok := d.GetOk("base_url")
@@ -167,22 +129,11 @@ func (b *backend) pathConfigWrite(
 		cfg.BaseURL = d.Get("base_url").(string)
 	}
 
-	productionRaw := d.Get("production").(bool)
-	cfg.Production = &productionRaw
+	ttl := d.Get("ttl").(int)
+	cfg.TTL = time.Duration(ttl) * time.Second
 
-	ttl, ok := d.GetOk("ttl")
-	if ok {
-		cfg.TTL = time.Duration(ttl.(int)) * time.Second
-	} else if req.Operation == logical.CreateOperation {
-		cfg.TTL = time.Duration(d.Get("ttl").(int)) * time.Second
-	}
-
-	maxTTL, ok := d.GetOk("max_ttl")
-	if ok {
-		cfg.MaxTTL = time.Duration(maxTTL.(int)) * time.Second
-	} else if req.Operation == logical.CreateOperation {
-		cfg.MaxTTL = time.Duration(d.Get("max_ttl").(int)) * time.Second
-	}
+	maxTTL := d.Get("max_ttl").(int)
+	cfg.MaxTTL = time.Duration(maxTTL) * time.Second
 
 	jsonCfg, err := logical.StorageEntryJSON("config", cfg)
 	if err != nil {
@@ -207,26 +158,25 @@ func (b *backend) pathConfigExistenceCheck(
 
 // OktaClient creates a basic okta client connection
 func (c *ConfigEntry) OktaClient() *okta.Client {
-	production := true
-	if c.Production != nil {
-		production = *c.Production
-	}
+	client := okta.NewClient(c.Org)
 	if c.BaseURL != "" {
-		if strings.Contains(c.BaseURL, "oktapreview.com") {
-			production = false
-		}
+		client.Url = c.BaseURL
 	}
-	return okta.NewClient(cleanhttp.DefaultClient(), c.Org, c.Token, production)
+
+	if c.Token != "" {
+		client.ApiToken = c.Token
+	}
+
+	return client
 }
 
 // ConfigEntry for Okta
 type ConfigEntry struct {
-	Org        string        `json:"organization"`
-	Token      string        `json:"token"`
-	BaseURL    string        `json:"base_url"`
-	Production *bool         `json:"is_production,omitempty"`
-	TTL        time.Duration `json:"ttl"`
-	MaxTTL     time.Duration `json:"max_ttl"`
+	Org     string        `json:"organization"`
+	Token   string        `json:"token"`
+	BaseURL string        `json:"base_url"`
+	TTL     time.Duration `json:"ttl"`
+	MaxTTL  time.Duration `json:"max_ttl"`
 }
 
 const pathConfigHelp = `

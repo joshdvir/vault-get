@@ -21,7 +21,6 @@ large numbers of tokens and their associated leases at once.
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
 | `LIST`   | `/auth/token/accessors`      | `200 application/json` |
-| `GET`    | `/auth/token/accessors?list=true` | `200 application/json` |
 
 ### Sample Request
 
@@ -566,7 +565,6 @@ List available token roles.
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
 | `LIST`   | `/auth/token/roles`          | `200 application/json` |
-| `GET`    | `/auth/token/roles?list=true` | `200 application/json` |
 
 ### Sample Request
 

@@ -153,7 +153,6 @@ This endpoint returns a list of existing groups in the backend.
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
 | `LIST`   | `/auth/ldap/groups`          | `200 application/json` |
-| `GET`   | `/auth/ldap/groups?list=true` | `200 application/json` |
 
 ### Sample Request
 
@@ -277,7 +276,6 @@ This endpoint returns a list of existing users in the backend.
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
 | `LIST`   | `/auth/ldap/users`          | `200 application/json` |
-| `GET`   | `/auth/ldap/users?list=true`          | `200 application/json` |
 
 ### Sample Request
 

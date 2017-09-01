@@ -1,8 +1,6 @@
 package okta
 
 import (
-	"strings"
-
 	"github.com/hashicorp/vault/helper/policyutil"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
@@ -47,58 +45,33 @@ func pathGroups(b *backend) *framework.Path {
 	}
 }
 
-// We look up groups in a case-insensitive manner since Okta is case-preserving
-// but case-insensitive for comparisons
-func (b *backend) Group(s logical.Storage, n string) (*GroupEntry, string, error) {
-	canonicalName := n
+func (b *backend) Group(s logical.Storage, n string) (*GroupEntry, error) {
 	entry, err := s.Get("group/" + n)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if entry == nil {
-		entries, err := s.List("group/")
-		if err != nil {
-			return nil, "", err
-		}
-		for _, groupName := range entries {
-			if strings.ToLower(groupName) == strings.ToLower(n) {
-				entry, err = s.Get("group/" + groupName)
-				if err != nil {
-					return nil, "", err
-				}
-				canonicalName = groupName
-				break
-			}
-		}
-	}
-	if entry == nil {
-		return nil, "", nil
+		return nil, nil
 	}
 
 	var result GroupEntry
 	if err := entry.DecodeJSON(&result); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
-	return &result, canonicalName, nil
+	return &result, nil
 }
 
 func (b *backend) pathGroupDelete(
 	req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	name := d.Get("name").(string)
 	if len(name) == 0 {
-		return logical.ErrorResponse("'name' must be supplied"), nil
+		return logical.ErrorResponse("Error empty name"), nil
 	}
 
-	entry, canonicalName, err := b.Group(req.Storage, name)
+	err := req.Storage.Delete("group/" + name)
 	if err != nil {
 		return nil, err
-	}
-	if entry != nil {
-		err := req.Storage.Delete("group/" + canonicalName)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return nil, nil
@@ -108,10 +81,10 @@ func (b *backend) pathGroupRead(
 	req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	name := d.Get("name").(string)
 	if len(name) == 0 {
-		return logical.ErrorResponse("'name' must be supplied"), nil
+		return logical.ErrorResponse("Error empty name"), nil
 	}
 
-	group, _, err := b.Group(req.Storage, name)
+	group, err := b.Group(req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
@@ -130,19 +103,7 @@ func (b *backend) pathGroupWrite(
 	req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	name := d.Get("name").(string)
 	if len(name) == 0 {
-		return logical.ErrorResponse("'name' must be supplied"), nil
-	}
-
-	// Check for an existing group, possibly lowercased so that we keep using
-	// existing user set values
-	_, canonicalName, err := b.Group(req.Storage, name)
-	if err != nil {
-		return nil, err
-	}
-	if canonicalName != "" {
-		name = canonicalName
-	} else {
-		name = strings.ToLower(name)
+		return logical.ErrorResponse("Error empty name"), nil
 	}
 
 	entry, err := logical.StorageEntryJSON("group/"+name, &GroupEntry{

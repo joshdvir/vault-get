@@ -3,7 +3,6 @@ package okta
 import (
 	"fmt"
 
-	"github.com/chrismalek/oktasdk-go/okta"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 )
@@ -57,43 +56,17 @@ func (b *backend) Login(req *logical.Request, username string, password string) 
 	}
 
 	client := cfg.OktaClient()
-
-	type embeddedResult struct {
-		User okta.User `json:"user"`
-	}
-
-	type authResult struct {
-		Embedded embeddedResult `json:"_embedded"`
-	}
-
-	authReq, err := client.NewRequest("POST", "authn", map[string]interface{}{
-		"username": username,
-		"password": password,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var result authResult
-	rsp, err := client.Do(authReq, &result)
+	auth, err := client.Authenticate(username, password)
 	if err != nil {
 		return nil, logical.ErrorResponse(fmt.Sprintf("Okta auth failed: %v", err)), nil
 	}
-	if rsp == nil {
+	if auth == nil {
 		return nil, logical.ErrorResponse("okta auth backend unexpected failure"), nil
 	}
 
-	oktaUser := &result.Embedded.User
-	rsp, err = client.Users.PopulateGroups(oktaUser)
+	oktaGroups, err := b.getOktaGroups(cfg, auth.Embedded.User.ID)
 	if err != nil {
 		return nil, logical.ErrorResponse(err.Error()), nil
-	}
-	if rsp == nil {
-		return nil, logical.ErrorResponse("okta auth backend unexpected failure"), nil
-	}
-	oktaGroups := make([]string, 0, len(oktaUser.Groups))
-	for _, group := range oktaUser.Groups {
-		oktaGroups = append(oktaGroups, group.Profile.Name)
 	}
 	if b.Logger().IsDebug() {
 		b.Logger().Debug("auth/okta: Groups fetched from Okta", "num_groups", len(oktaGroups), "groups", oktaGroups)
@@ -111,11 +84,6 @@ func (b *backend) Login(req *logical.Request, username string, password string) 
 	var allGroups []string
 	// Import the custom added groups from okta backend
 	user, err := b.User(req.Storage, username)
-	if err != nil {
-		if b.Logger().IsDebug() {
-			b.Logger().Debug("auth/okta: error looking up user", "error", err)
-		}
-	}
 	if err == nil && user != nil && user.Groups != nil {
 		if b.Logger().IsDebug() {
 			b.Logger().Debug("auth/okta: adding local groups", "num_local_groups", len(user.Groups), "local_groups", user.Groups)
@@ -128,14 +96,9 @@ func (b *backend) Login(req *logical.Request, username string, password string) 
 	// Retrieve policies
 	var policies []string
 	for _, groupName := range allGroups {
-		entry, _, err := b.Group(req.Storage, groupName)
-		if err != nil {
-			if b.Logger().IsDebug() {
-				b.Logger().Debug("auth/okta: error looking up group policies", "error", err)
-			}
-		}
-		if err == nil && entry != nil && entry.Policies != nil {
-			policies = append(policies, entry.Policies...)
+		group, err := b.Group(req.Storage, groupName)
+		if err == nil && group != nil && group.Policies != nil {
+			policies = append(policies, group.Policies...)
 		}
 	}
 
@@ -155,6 +118,23 @@ func (b *backend) Login(req *logical.Request, username string, password string) 
 	}
 
 	return policies, oktaResponse, nil
+}
+
+func (b *backend) getOktaGroups(cfg *ConfigEntry, userID string) ([]string, error) {
+	if cfg.Token != "" {
+		client := cfg.OktaClient()
+		groups, err := client.Groups(userID)
+		if err != nil {
+			return nil, err
+		}
+
+		oktaGroups := make([]string, 0, len(*groups))
+		for _, group := range *groups {
+			oktaGroups = append(oktaGroups, group.Profile.Name)
+		}
+		return oktaGroups, err
+	}
+	return nil, nil
 }
 
 const backendHelp = `

@@ -42,14 +42,26 @@ func NewGCSBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 		}
 	}
 
-	ctx := context.Background()
-	client, err := newGCSClient(ctx, conf, logger)
+	// path to service account JSON file
+	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credentialsFile == "" {
+		credentialsFile = conf["credentials_file"]
+		if credentialsFile == "" {
+			return nil, fmt.Errorf("env var GOOGLE_APPLICATION_CREDENTIALS or configuration parameter 'credentials_file' must be set")
+		}
+	}
+
+	client, err := storage.NewClient(
+		context.Background(),
+		option.WithServiceAccountFile(credentialsFile),
+	)
+
 	if err != nil {
-		return nil, errwrap.Wrapf("error establishing strorage client: {{err}}", err)
+		return nil, fmt.Errorf("error establishing storage client: '%v'", err)
 	}
 
 	// check client connectivity by getting bucket attributes
-	_, err = client.Bucket(bucketName).Attrs(ctx)
+	_, err = client.Bucket(bucketName).Attrs(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("unable to access bucket '%s': '%v'", bucketName, err)
 	}
@@ -74,29 +86,6 @@ func NewGCSBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 	}
 
 	return &g, nil
-}
-
-func newGCSClient(ctx context.Context, conf map[string]string, logger log.Logger) (*storage.Client, error) {
-	// if credentials_file is configured, try to use it
-	// else use application default credentials
-	credentialsFile, ok := conf["credentials_file"]
-	if ok {
-		client, err := storage.NewClient(
-			ctx,
-			option.WithServiceAccountFile(credentialsFile),
-		)
-
-		if err != nil {
-			return nil, fmt.Errorf("error with provided credentials: '%v'", err)
-		}
-		return client, nil
-	}
-
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		return nil, errwrap.Wrapf("error with application default credentials: {{err}}", err)
-	}
-	return client, nil
 }
 
 // Put is used to insert or update an entry

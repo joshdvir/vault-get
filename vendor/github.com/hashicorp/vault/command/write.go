@@ -8,7 +8,6 @@ import (
 
 	"github.com/hashicorp/vault/helper/kv-builder"
 	"github.com/hashicorp/vault/meta"
-	"github.com/posener/complete"
 )
 
 // WriteCommand is a Command that puts data into the Vault.
@@ -139,16 +138,4 @@ Write Options:
 
 `
 	return strings.TrimSpace(helpText)
-}
-
-func (c *WriteCommand) AutocompleteArgs() complete.Predictor {
-	return complete.PredictNothing
-}
-
-func (c *WriteCommand) AutocompleteFlags() complete.Flags {
-	return complete.Flags{
-		"-force":  complete.PredictNothing,
-		"-format": predictFormat,
-		"-field":  complete.PredictNothing,
-	}
 }

@@ -42,9 +42,7 @@ type Config struct {
 	DefaultLeaseTTL    time.Duration `hcl:"-"`
 	DefaultLeaseTTLRaw interface{}   `hcl:"default_lease_ttl"`
 
-	ClusterName         string `hcl:"cluster_name"`
-	ClusterCipherSuites string `hcl:"cluster_cipher_suites"`
-
+	ClusterName     string `hcl:"cluster_name"`
 	PluginDirectory string `hcl:"plugin_directory"`
 }
 
@@ -278,11 +276,6 @@ func (c *Config) Merge(c2 *Config) *Config {
 		result.ClusterName = c2.ClusterName
 	}
 
-	result.ClusterCipherSuites = c.ClusterCipherSuites
-	if c2.ClusterCipherSuites != "" {
-		result.ClusterCipherSuites = c2.ClusterCipherSuites
-	}
-
 	result.EnableUI = c.EnableUI
 	if c2.EnableUI {
 		result.EnableUI = c2.EnableUI
@@ -383,7 +376,6 @@ func ParseConfig(d string, logger log.Logger) (*Config, error) {
 		"default_lease_ttl",
 		"max_lease_ttl",
 		"cluster_name",
-		"cluster_cipher_suites",
 		"plugin_directory",
 	}
 	if err := checkHCLKeys(list, valid); err != nil {

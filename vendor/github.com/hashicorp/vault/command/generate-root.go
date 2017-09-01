@@ -13,7 +13,6 @@ import (
 	"github.com/hashicorp/vault/helper/pgpkeys"
 	"github.com/hashicorp/vault/helper/xor"
 	"github.com/hashicorp/vault/meta"
-	"github.com/posener/complete"
 )
 
 // GenerateRootCommand is a Command that generates a new root token.
@@ -352,21 +351,4 @@ Generate Root Options:
                           instead be displayed with the key prompt.
 `
 	return strings.TrimSpace(helpText)
-}
-
-func (c *GenerateRootCommand) AutocompleteArgs() complete.Predictor {
-	return complete.PredictNothing
-}
-
-func (c *GenerateRootCommand) AutocompleteFlags() complete.Flags {
-	return complete.Flags{
-		"-init":    complete.PredictNothing,
-		"-cancel":  complete.PredictNothing,
-		"-status":  complete.PredictNothing,
-		"-decode":  complete.PredictNothing,
-		"-genotp":  complete.PredictNothing,
-		"-otp":     complete.PredictNothing,
-		"-pgp-key": complete.PredictNothing,
-		"-nonce":   complete.PredictNothing,
-	}
 }

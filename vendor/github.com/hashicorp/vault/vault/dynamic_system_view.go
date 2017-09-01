@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hashicorp/errwrap"
-
 	"github.com/hashicorp/vault/helper/consts"
 	"github.com/hashicorp/vault/helper/pluginutil"
 	"github.com/hashicorp/vault/helper/wrapping"
@@ -134,7 +132,7 @@ func (d dynamicSystemView) LookupPlugin(name string) (*pluginutil.PluginRunner, 
 		return nil, err
 	}
 	if r == nil {
-		return nil, errwrap.Wrapf(fmt.Sprintf("{{err}}: %s", name), ErrPluginNotFound)
+		return nil, fmt.Errorf("no plugin found with name: %s", name)
 	}
 
 	return r, nil

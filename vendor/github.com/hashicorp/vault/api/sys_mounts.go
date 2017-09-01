@@ -124,7 +124,6 @@ type MountInput struct {
 	Description string           `json:"description" structs:"description"`
 	Config      MountConfigInput `json:"config" structs:"config"`
 	Local       bool             `json:"local" structs:"local"`
-	PluginName  string           `json:"plugin_name,omitempty" structs:"plugin_name"`
 }
 
 type MountConfigInput struct {

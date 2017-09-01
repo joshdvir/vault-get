@@ -37,8 +37,7 @@ func (c *PolicyWriteCommand) Run(args []string) int {
 		return 2
 	}
 
-	// Policies are normalized to lowercase
-	name := strings.ToLower(args[0])
+	name := args[0]
 	path := args[1]
 
 	// Read the policy

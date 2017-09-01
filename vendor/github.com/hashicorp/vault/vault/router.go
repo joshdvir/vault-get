@@ -64,12 +64,9 @@ func (r *Router) Mount(backend logical.Backend, prefix string, mountEntry *Mount
 	}
 
 	// Build the paths
-	paths := new(logical.Paths)
-	if backend != nil {
-		specialPaths := backend.SpecialPaths()
-		if specialPaths != nil {
-			paths = specialPaths
-		}
+	paths := backend.SpecialPaths()
+	if paths == nil {
+		paths = new(logical.Paths)
 	}
 
 	// Create a mount entry
@@ -291,19 +288,17 @@ func (r *Router) RouteExistenceCheck(req *logical.Request) (bool, bool, error) {
 func (r *Router) routeCommon(req *logical.Request, existenceCheck bool) (*logical.Response, bool, bool, error) {
 	// Find the mount point
 	r.l.RLock()
-	adjustedPath := req.Path
-	mount, raw, ok := r.root.LongestPrefix(adjustedPath)
-	if !ok && !strings.HasSuffix(adjustedPath, "/") {
+	mount, raw, ok := r.root.LongestPrefix(req.Path)
+	if !ok {
 		// Re-check for a backend by appending a slash. This lets "foo" mean
 		// "foo/" at the root level which is almost always what we want.
-		adjustedPath += "/"
-		mount, raw, ok = r.root.LongestPrefix(adjustedPath)
+		req.Path += "/"
+		mount, raw, ok = r.root.LongestPrefix(req.Path)
 	}
 	r.l.RUnlock()
 	if !ok {
 		return logical.ErrorResponse(fmt.Sprintf("no handler for route '%s'", req.Path)), false, false, logical.ErrUnsupportedPath
 	}
-	req.Path = adjustedPath
 	defer metrics.MeasureSince([]string{"route", string(req.Operation),
 		strings.Replace(mount, "/", "-", -1)}, time.Now())
 	re := raw.(*routeEntry)

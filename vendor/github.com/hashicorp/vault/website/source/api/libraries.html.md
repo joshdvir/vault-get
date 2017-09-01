@@ -119,12 +119,6 @@ $ composer require jippi/vault-php-sdk
 $ composer require violuke/vault-php-sdk
 ```
 
-* [vault-php](https://github.com/CSharpRU/vault-php)
-
-```shell
-$ composer require csharpru/vault-php
-```
-
 ### PowerShell
 
 * [Zyborg.Vault](https://github.com/zyborg/Zyborg.Vault)

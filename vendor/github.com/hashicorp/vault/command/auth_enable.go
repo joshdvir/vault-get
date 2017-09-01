@@ -6,7 +6,6 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/meta"
-	"github.com/posener/complete"
 )
 
 // AuthEnableCommand is a Command that enables a new endpoint.
@@ -57,24 +56,17 @@ func (c *AuthEnableCommand) Run(args []string) int {
 	if err := client.Sys().EnableAuthWithOptions(path, &api.EnableAuthOptions{
 		Type:        authType,
 		Description: description,
-		Config: api.AuthConfigInput{
-			PluginName: pluginName,
-		},
-		Local: local,
+		PluginName:  pluginName,
+		Local:       local,
 	}); err != nil {
 		c.Ui.Error(fmt.Sprintf(
 			"Error: %s", err))
 		return 2
 	}
 
-	authTypeOutput := fmt.Sprintf("'%s'", authType)
-	if authType == "plugin" {
-		authTypeOutput = fmt.Sprintf("plugin '%s'", pluginName)
-	}
-
 	c.Ui.Output(fmt.Sprintf(
-		"Successfully enabled %s at '%s'!",
-		authTypeOutput, path))
+		"Successfully enabled '%s' at '%s'!",
+		authType, path))
 
 	return 0
 }
@@ -112,30 +104,4 @@ Auth Enable Options:
                           removed by replication.
 `
 	return strings.TrimSpace(helpText)
-}
-
-func (c *AuthEnableCommand) AutocompleteArgs() complete.Predictor {
-	return complete.PredictSet(
-		"approle",
-		"cert",
-		"aws",
-		"app-id",
-		"gcp",
-		"github",
-		"userpass",
-		"ldap",
-		"okta",
-		"radius",
-		"plugin",
-	)
-
-}
-
-func (c *AuthEnableCommand) AutocompleteFlags() complete.Flags {
-	return complete.Flags{
-		"-description": complete.PredictNothing,
-		"-path":        complete.PredictNothing,
-		"-plugin-name": complete.PredictNothing,
-		"-local":       complete.PredictNothing,
-	}
 }

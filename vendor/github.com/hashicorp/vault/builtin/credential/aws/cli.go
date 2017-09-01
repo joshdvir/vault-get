@@ -69,7 +69,7 @@ func GenerateLoginData(accessKey, secretKey, sessionToken, headerValue string) (
 	return loginData, nil
 }
 
-func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, error) {
+func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (string, error) {
 	mount, ok := m["mount"]
 	if !ok {
 		mount = "aws"
@@ -87,23 +87,23 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 
 	loginData, err := GenerateLoginData(m["aws_access_key_id"], m["aws_secret_access_key"], m["aws_security_token"], headerValue)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if loginData == nil {
-		return nil, fmt.Errorf("got nil response from GenerateLoginData")
+		return "", fmt.Errorf("got nil response from GenerateLoginData")
 	}
 	loginData["role"] = role
 	path := fmt.Sprintf("auth/%s/login", mount)
 	secret, err := c.Logical().Write(path, loginData)
 
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if secret == nil {
-		return nil, fmt.Errorf("empty response from credential provider")
+		return "", fmt.Errorf("empty response from credential provider")
 	}
 
-	return secret, nil
+	return secret.Auth.ClientToken, nil
 }
 
 func (h *CLIHandler) Help() string {

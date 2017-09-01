@@ -107,7 +107,6 @@ Lists configured certificate names.
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
 | `LIST`   | `/auth/cert/certs`           | `200 application/json` |
-| `GET`   | `/auth/cert/certs?list=true`  | `200 application/json` |
 
 ### Sample Request
 

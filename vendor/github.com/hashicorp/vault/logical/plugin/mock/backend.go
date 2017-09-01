@@ -43,7 +43,6 @@ func Backend() *backend {
 			kvPaths(&b),
 			[]*framework.Path{
 				pathInternal(&b),
-				pathSpecial(&b),
 			},
 		),
 		PathsSpecial: &logical.Paths{

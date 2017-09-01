@@ -9,8 +9,7 @@ import (
 
 // BackendPlugin is the plugin.Plugin implementation
 type BackendPlugin struct {
-	Factory      func(*logical.BackendConfig) (logical.Backend, error)
-	metadataMode bool
+	Factory func(*logical.BackendConfig) (logical.Backend, error)
 }
 
 // Server gets called when on plugin.Serve()
@@ -20,5 +19,5 @@ func (b *BackendPlugin) Server(broker *plugin.MuxBroker) (interface{}, error) {
 
 // Client gets called on plugin.NewClient()
 func (b BackendPlugin) Client(broker *plugin.MuxBroker, c *rpc.Client) (interface{}, error) {
-	return &backendPluginClient{client: c, broker: broker, metadataMode: b.metadataMode}, nil
+	return &backendPluginClient{client: c, broker: broker}, nil
 }
