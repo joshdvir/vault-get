@@ -9,7 +9,6 @@ pipeline:
     environment:
       - VERSION=0.5.0
     commands:
-      - mkdir /drone/bin
       - mkdir -p prod
       - mkdir -p dist
       - curl https://glide.sh/get | sh
