@@ -20,6 +20,4 @@ pipeline:
       - gox -osarch-list
       - CGO_ENABLED=0 gox -output "dist/vault-get-{{.OS}}-{{.Arch}}"
       - ghr -t $GITHUB_TOKEN --replace -u devops-israel -r vault-get v$VERSION dist/
-      # - cp Dockerfile prod/
-      # - cp dist/vault-get-linux-amd64 prod/
     secrets: [ github_token ]
