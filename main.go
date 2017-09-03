@@ -32,13 +32,8 @@ func main() {
 		},
 		cli.StringFlag{
 			Name:   "vault_path",
-			Usage:  "Vault path to get key from",
+			Usage:  "Vault path of the secret. eg. secret/my-secret",
 			EnvVar: "VAULT_PATH",
-		},
-		cli.StringFlag{
-			Name:   "vault_key",
-			Usage:  "Vault key to get value from",
-			EnvVar: "VAULT_KEY",
 		},
 	}
 
@@ -57,10 +52,6 @@ func main() {
 
 		if len(cli.String("vault_path")) == 0 {
 			return errors.New("No Vault path provided")
-		}
-
-		if len(cli.String("vault_key")) == 0 {
-			return errors.New("No Vault key provided")
 		}
 
 		client, err := vaultapi.NewClient(&vaultapi.Config{Address: cli.String("vault_host")})
@@ -90,14 +81,11 @@ func main() {
 			return nil
 		}
 
+		output := "export "
 		for vkey, vvalue := range vaultSecret.Data {
-			if vkey == cli.String("vault_key") {
-				fmt.Printf("%s", vvalue)
-				return nil
-			}
+			output += vkey + "=" + vvalue.(string) + " "
 		}
-
-		fmt.Printf("vault_key not found")
+		fmt.Printf(output)
 		return nil
 	}
 
