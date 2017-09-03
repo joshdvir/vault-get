@@ -1,6 +1,6 @@
 # Vault-Get
 
-A small application connects to [Vault](https://www.vaultproject.io/) and out puts the value of a key in a path using user/password authentication.
+A small application connects to [Vault](https://www.vaultproject.io/) and outputs the value of a path using user/password authentication.
 
 ## Getting Started
 
@@ -16,7 +16,7 @@ The help section explains everything:
 
 ```
 NAME:
-   vault-get - Get a value from Vault
+   vault-get - Get a value fron Vault
 
 USAGE:
    vault-get [global options] command [command options] [arguments...]
@@ -31,8 +31,7 @@ GLOBAL OPTIONS:
    --vault_host value      Vault host url [$VAULT_HOST]
    --vault_username value  Vault username [$VAULT_USERNAME]
    --vault_password value  Vault password [$VAULT_PASSWORD]
-   --vault_path value      Vault path to get key from [$VAULT_PATH]
-   --vault_key value       Vault key to get value from [$VAULT_KEY]
+   --vault_path value      Vault path of the secret. eg. secret/my-secret [$VAULT_PATH]
    --help, -h              show help
    --version, -v           print the version
 ```
@@ -40,6 +39,12 @@ GLOBAL OPTIONS:
 ## Deployment
 
 Download a [release compatible to your OS](https://github.com/devops-israel/vault-get/releases) and run the application.
+
+Example to use in you bash script:
+
+```bash
+eval "$(vault-get --vault_host https://vault.example.com --vault_username user --vault_password pass --vault_path secret/my-secret)"
+```
 
 ## Built With
 
