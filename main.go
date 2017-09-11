@@ -56,7 +56,7 @@ func main() {
 
 		client, err := vaultapi.NewClient(&vaultapi.Config{Address: cli.String("vault_host")})
 		if err != nil {
-	        errors.New("Error creating vault client")
+            fmt.Printf(os.Stderr, "error reading from vault: %s", err)
             os.Exit(1)
 		}
 
@@ -68,7 +68,7 @@ func main() {
 		logical := client.Logical()
 		secret, err := logical.Write(path, options)
 		if err != nil {
-            errors.New("error getting token from vault: %s", err)
+            fmt.Printf(os.Stderr, "error getting token from vault: %s", err)
 			os.Exit(1)
 		}
 
@@ -78,7 +78,7 @@ func main() {
 
 		vaultSecret, err := logical.Read(cli.String("vault_path"))
 		if err != nil {
-			errors.New("error reading from vault: %s", err)
+            fmt.Printf(os.Stderr, "error reading from vault: %s", err)
 			os.Exit(1)
 		}
 
