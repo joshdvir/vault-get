@@ -56,8 +56,8 @@ func main() {
 
 		client, err := vaultapi.NewClient(&vaultapi.Config{Address: cli.String("vault_host")})
 		if err != nil {
-            fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
-            os.Exit(1)
+			fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
+			os.Exit(1)
 		}
 
 		options := map[string]interface{}{
