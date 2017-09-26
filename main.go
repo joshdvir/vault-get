@@ -68,7 +68,7 @@ func main() {
 		logical := client.Logical()
 		secret, err := logical.Write(path, options)
 		if err != nil {
-            fmt.Fprintf(os.Stderr, "error getting token from vault: %s", err)
+			fmt.Fprintf(os.Stderr, "error getting token from vault: %s", err)
 			os.Exit(1)
 		}
 
@@ -78,7 +78,7 @@ func main() {
 
 		vaultSecret, err := logical.Read(cli.String("vault_path"))
 		if err != nil {
-            fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
+			fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
 			os.Exit(1)
 		}
 
