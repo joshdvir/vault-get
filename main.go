@@ -12,7 +12,7 @@ import (
 func main() {
 	app := cli.NewApp()
 	app.Name = "vault-get"
-	app.Usage = "Get a value fron Vault"
+	app.Usage = "Get a value from Vault"
 	app.Version = fmt.Sprintf("0.5.0")
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
@@ -21,13 +21,23 @@ func main() {
 			EnvVar: "VAULT_HOST",
 		},
 		cli.StringFlag{
+			Name:   "vault_auth",
+			Usage:  "Vault auth: 'userpass' with vault_username + vault_password, or 'token' with vault_token",
+			EnvVar: "VAULT_AUTH",
+		},
+		cli.StringFlag{
+			Name:   "vault_token",
+			Usage:  "Vault token (used if vault_auth is token)",
+			EnvVar: "VAULT_TOKEN",
+		},
+		cli.StringFlag{
 			Name:   "vault_username",
-			Usage:  "Vault username",
+			Usage:  "Vault username (used if vault_auth is userpass)",
 			EnvVar: "VAULT_USERNAME",
 		},
 		cli.StringFlag{
 			Name:   "vault_password",
-			Usage:  "Vault password",
+			Usage:  "Vault password (used if vault_auth is userpass)",
 			EnvVar: "VAULT_PASSWORD",
 		},
 		cli.StringFlag{
@@ -42,13 +52,24 @@ func main() {
 			return errors.New("No Vault host provided")
 		}
 
-		if len(cli.String("vault_username")) == 0 {
-			return errors.New("No Vault username provided")
+		if len(cli.String("vault_auth")) == 0 {
+			return errors.New("No vault authentication method")
 		}
 
-		if len(cli.String("vault_password")) == 0 {
-			return errors.New("No Vault password provided")
-		}
+        if cli.String("vault_auth") == "userpass" {
+            if len(cli.String("vault_username")) == 0 {
+                return errors.New("No Vault username provided")
+            }
+
+            if len(cli.String("vault_password")) == 0 {
+                return errors.New("No Vault password provided")
+            }
+
+        } else if cli.String("vault_auth") == "token" {
+            if len(cli.String("vault_token")) == 0 {
+                return errors.New("No token provided")
+            }
+        }
 
 		if len(cli.String("vault_path")) == 0 {
 			return errors.New("No Vault path provided")
@@ -64,16 +85,22 @@ func main() {
 			"password": cli.String("vault_password"),
 		}
 
-		path := fmt.Sprintf("auth/userpass/login/%s", cli.String("vault_username"))
-		logical := client.Logical()
-		secret, err := logical.Write(path, options)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error getting token from vault: %s", err)
-			os.Exit(1)
-		}
+        logical := client.Logical()
+        if cli.String("vault_auth") == "userpass" {
+            path := fmt.Sprintf("auth/userpass/login/%s", cli.String("vault_username"))
+            secret, err := logical.Write(path, options)
+            if err != nil {
+                fmt.Fprintf(os.Stderr, "error getting token from vault: %s", err)
+                os.Exit(1)
+            }
+            client, _ = vaultapi.NewClient(&vaultapi.Config{Address: cli.String("vault_host")})
+            client.SetToken(secret.Auth.ClientToken)
 
-		client, _ = vaultapi.NewClient(&vaultapi.Config{Address: cli.String("vault_host")})
-		client.SetToken(secret.Auth.ClientToken)
+        } else if cli.String("vault_auth") == "token" {
+            client, _ = vaultapi.NewClient(&vaultapi.Config{Address: cli.String("vault_host")})
+            client.SetToken(cli.String("vault_token"))
+        }
+
 		logical = client.Logical()
 
 		vaultSecret, err := logical.Read(cli.String("vault_path"))
