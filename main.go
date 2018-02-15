@@ -77,6 +77,10 @@ func main() {
 		logical = client.Logical()
 
 		vaultSecret, err := logical.Read(cli.String("vault_path"))
+        if vaultSecret == nil {
+            fmt.Println("Given path is empty or not complete")
+			os.Exit(1)
+        }
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
 			os.Exit(1)
