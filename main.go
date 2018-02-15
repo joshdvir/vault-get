@@ -13,7 +13,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "vault-get"
 	app.Usage = "Get a value from Vault"
-	app.Version = fmt.Sprintf("0.5.0")
+	app.Version = fmt.Sprintf("0.6.0")
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "vault_host",
@@ -22,8 +22,9 @@ func main() {
 		},
 		cli.StringFlag{
 			Name:   "vault_auth",
-			Usage:  "Vault auth: 'userpass' with vault_username + vault_password, or 'token' with vault_token",
+			Usage:  "Vault auth: defaults to 'token' (can be set explicitly with vault_token) or 'userpass' with vault_username + vault_password",
 			EnvVar: "VAULT_AUTH",
+            Value:  "token",
 		},
 		cli.StringFlag{
 			Name:   "vault_token",
@@ -50,10 +51,6 @@ func main() {
 	app.Action = func(cli *cli.Context) error {
 		if len(cli.String("vault_host")) == 0 {
 			return errors.New("No Vault host provided")
-		}
-
-		if len(cli.String("vault_auth")) == 0 {
-			return errors.New("No vault authentication method")
 		}
 
         if cli.String("vault_auth") == "userpass" {
