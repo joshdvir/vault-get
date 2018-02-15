@@ -78,7 +78,7 @@ func main() {
 
 		vaultSecret, err := logical.Read(cli.String("vault_path"))
         if vaultSecret == nil {
-            fmt.Println("Given path is empty or not complete")
+			fmt.Fprintf(os.Stderr, "Error retrieving data: path is wrong or not complete")
 			os.Exit(1)
         }
 		if err != nil {
