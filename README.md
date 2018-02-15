@@ -1,14 +1,14 @@
 # Vault-Get
 
-A small application connects to [Vault](https://www.vaultproject.io/) and outputs the value of a path using user/password authentication.
+A small application that connects to [Vault](https://www.vaultproject.io/) and outputs the value of a path using user/password authentication.
 
 ## Getting Started
 
-Application is packed as a single binary, just download and run.
+The Application is packed as a single binary, just download and run.
 
 ### Prerequisites
 
-Nothing.
+None.
 
 ### Usage
 
@@ -16,19 +16,21 @@ The help section explains everything:
 
 ```
 NAME:
-   vault-get - Get a value fron Vault
+   vault-get - Get a value from Vault
 
 USAGE:
    vault-get [global options] command [command options] [arguments...]
 
 VERSION:
-   0.5.0
+   0.6.0
 
 COMMANDS:
      help, h  Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
    --vault_host value      Vault host url [$VAULT_HOST]
+   --vault_auth value      Vault auth: 'userpass' with vault_username + vault_password, or 'token' with vault_token [$VAULT_AUTH]
+   --vault_token value     Vault token (used if vault_auth is token) [$VAULT_TOKEN]
    --vault_username value  Vault username [$VAULT_USERNAME]
    --vault_password value  Vault password [$VAULT_PASSWORD]
    --vault_path value      Vault path of the secret. eg. secret/my-secret [$VAULT_PATH]
