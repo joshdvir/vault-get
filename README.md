@@ -29,6 +29,8 @@ COMMANDS:
 
 GLOBAL OPTIONS:
    --vault_host value      Vault host url [$VAULT_HOST]
+   --vault_auth value      Vault auth: 'userpass' with vault_username + vault_password, or 'token' with vault_token [$VAULT_AUTH]
+   --vault_token value     Vault token (used if vault_auth is token) [$VAULT_TOKEN]
    --vault_username value  Vault username [$VAULT_USERNAME]
    --vault_password value  Vault password [$VAULT_PASSWORD]
    --vault_path value      Vault path of the secret. eg. secret/my-secret [$VAULT_PATH]
