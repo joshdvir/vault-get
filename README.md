@@ -42,10 +42,14 @@ GLOBAL OPTIONS:
 
 Download a [release compatible to your OS](https://github.com/devops-israel/vault-get/releases) and run the application.
 
-Example to use in you bash script:
+Usage examples:
 
 ```bash
-eval "$(vault-get --vault_host https://vault.example.com --vault_username user --vault_password pass --vault_path secret/my-secret)"
+# Using a token auth (--vault_auth token does not need to be set explicitly):
+eval "$(vault-get --vault_host https://vault.example.com --vault_token mytoken --vault_path secret/my-secret)"
+
+# Doing the same with user and password authentication:
+eval "$(vault-get --vault_host https://vault.example.com --vault_auth userpass --vault_username user --vault_password pass --vault_path secret/my-secret)"
 ```
 
 ## Built With
