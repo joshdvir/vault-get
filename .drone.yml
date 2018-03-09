@@ -9,6 +9,7 @@ pipeline:
     environment:
       - VERSION=0.6.0
     commands:
+      - apt-get update && apt-get install upx
       - mkdir /go/bin
       - mkdir -p prod
       - mkdir -p dist
@@ -19,5 +20,9 @@ pipeline:
       - glide update
       - gox -osarch-list
       - CGO_ENABLED=0 gox -output "dist/vault-get-{{.OS}}-{{.Arch}}"
+      - upx -9 vault-get-darwin-amd64
+      - upx -9 --8086 vault-get-darwin-386
+      - upx -9 --8086 vault-get-linux-386
+      - upx -9 vault-get-linux-amd64
       - ghr -t $GITHUB_TOKEN --replace -u devops-israel -r vault-get v$VERSION dist/
     secrets: [ github_token ]
