@@ -20,8 +20,6 @@ pipeline:
       - glide update
       - gox -osarch-list
       - CGO_ENABLED=0 gox -output "dist/vault-get-{{.OS}}-{{.Arch}}"
-      - upx -9 dist/vault-get-darwin-amd64
-      - upx -9 --8086 dist/vault-get-darwin-386
       - upx -9 --8086 dist/vault-get-linux-386
       - upx -9 dist/vault-get-linux-amd64
       - ghr -t $GITHUB_TOKEN --replace -u devops-israel -r vault-get v$VERSION dist/
