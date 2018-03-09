@@ -21,8 +21,8 @@ pipeline:
       - gox -osarch-list
       - CGO_ENABLED=0 gox -ldflags "-s -w" -output "dist/vault-get-{{.OS}}-{{.Arch}}"
       - upx --help
-      - upx --best dist/vault-get-linux-386
-      - upx --best dist/vault-get-linux-amd64
-      - upx --best dist/vault-get-linux-arm
+      - upx -9 --best dist/vault-get-linux-386
+      - upx -9 --best dist/vault-get-linux-amd64
+      - upx -9 --best dist/vault-get-linux-arm
       - ghr -t $GITHUB_TOKEN --replace -u devops-israel -r vault-get v$VERSION dist/
     secrets: [ github_token ]
