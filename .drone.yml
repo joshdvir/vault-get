@@ -9,7 +9,7 @@ pipeline:
     environment:
       - VERSION=0.6.0
     commands:
-      - apt-get update && apt-get install upx
+      - apt-get update && apt-get install -y upx
       - mkdir /go/bin
       - mkdir -p prod
       - mkdir -p dist
