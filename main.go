@@ -80,6 +80,7 @@ func main() {
 
 		options := map[string]interface{}{
 			"password": cli.String("vault_password"),
+			"max_ttl": "7200",
 			"ttl": "7200",
 		}
 
@@ -103,8 +104,8 @@ func main() {
 
 		vaultSecret, err := logical.Read(cli.String("vault_path"))
 		if vaultSecret == nil {
-				fmt.Fprintf(os.Stderr, "Error retrieving data: path is wrong or not complete")
-				os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Error retrieving data: path is wrong or not complete")
+			os.Exit(1)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
