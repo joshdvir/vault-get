@@ -80,7 +80,6 @@ func main() {
 
 		options := map[string]interface{}{
 			"password": cli.String("vault_password"),
-			"max_ttl": "7200",
 			"ttl": "7200",
 		}
 
