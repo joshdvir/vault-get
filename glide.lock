@@ -1,8 +1,6 @@
 hash: c444ed627dde41f94087ae1a941a2023b7cb0f255dfac43e93ef48531486b7e5
-updated: 2017-09-01T11:12:51.97639218Z
+updated: 2018-12-04T19:59:45.8988721Z
 imports:
-- name: github.com/fatih/structs
-  version: 7e5a8eef611ee84dd359503f3969f80df4c50723
 - name: github.com/golang/snappy
   version: 553a641470496b2327abcac10b36396bd98e45c9
 - name: github.com/hashicorp/errwrap
@@ -11,8 +9,12 @@ imports:
   version: 3573b8b52aa7b37b9358d966a898feb387f62437
 - name: github.com/hashicorp/go-multierror
   version: 83588e72410abfbe4df460eeb6f30841ae47d4c4
+- name: github.com/hashicorp/go-retryablehttp
+  version: dfbae6744eb4c188d26ef53f1d39444c0c68b60c
 - name: github.com/hashicorp/go-rootcerts
   version: 6bb64b370b90e7ef1fa532be9e591a81c3493e00
+- name: github.com/hashicorp/go-sockaddr
+  version: 6d291a969b86c4b633730bfc6b8b9d64c3aafed9
 - name: github.com/hashicorp/hcl
   version: 8f6b1344a92ff8877cf24a5de9177bf7d0a2a187
   subpackages:
@@ -25,18 +27,25 @@ imports:
   - json/scanner
   - json/token
 - name: github.com/hashicorp/vault
-  version: 8d76a41854608c547a233f2e6292ae5355154695
+  version: a59ffa4a0f09bbf198241fe6793a96722789b639
   subpackages:
   - api
   - helper/compressutil
+  - helper/consts
+  - helper/hclutil
   - helper/jsonutil
   - helper/parseutil
+  - helper/strutil
 - name: github.com/mitchellh/go-homedir
   version: b8bc1bf767474819792c23f32d8286a45736f1c6
 - name: github.com/mitchellh/mapstructure
   version: d0303fe809921458f417bcf828397a65db30a7e4
-- name: github.com/sethgrid/pester
-  version: a86a2d88f4dc3c7dbf3a6a6bbbfb095690b834b6
+- name: github.com/pierrec/lz4
+  version: 623b5a2f4d2a41e411730dcdfbfdaeb5c0c4564e
+  subpackages:
+  - internal/xxh32
+- name: github.com/ryanuber/go-glob
+  version: 256dc444b735e061061cf46c809487313d5b0065
 - name: github.com/urfave/cli
   version: f017f86fccc5a039a98f23311f34fdf78b014f78
 - name: golang.org/x/net
@@ -53,4 +62,8 @@ imports:
   - transform
   - unicode/bidi
   - unicode/norm
+- name: golang.org/x/time
+  version: 85acf8d2951cb2a3bde7632f9ff273ef0379bcbd
+  subpackages:
+  - rate
 testImports: []

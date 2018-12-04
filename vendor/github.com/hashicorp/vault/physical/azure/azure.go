@@ -1,6 +1,7 @@
 package azure
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
@@ -11,17 +12,21 @@ import (
 	"time"
 
 	storage "github.com/Azure/azure-sdk-for-go/storage"
-	log "github.com/mgutz/logxi/v1"
-
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/armon/go-metrics"
 	"github.com/hashicorp/errwrap"
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
+	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/helper/strutil"
 	"github.com/hashicorp/vault/physical"
 )
 
-// MaxBlobSize at this time
-var MaxBlobSize = 1024 * 1024 * 4
+const (
+	// MaxBlobSize at this time
+	MaxBlobSize = 1024 * 1024 * 4
+	// MaxListResults is the current default value, setting explicitly
+	MaxListResults = 5000
+)
 
 // AzureBackend is a physical backend that stores data
 // within an Azure blob container.
@@ -30,6 +35,9 @@ type AzureBackend struct {
 	logger     log.Logger
 	permitPool *physical.PermitPool
 }
+
+// Verify AzureBackend satisfies the correct interfaces
+var _ physical.Backend = (*AzureBackend)(nil)
 
 // NewAzureBackend constructs an Azure backend using a pre-existing
 // bucket. Credentials can be provided to the backend, sourced
@@ -59,9 +67,23 @@ func NewAzureBackend(conf map[string]string, logger log.Logger) (physical.Backen
 		}
 	}
 
-	client, err := storage.NewBasicClient(accountName, accountKey)
+	environmentName := os.Getenv("AZURE_ENVIRONMENT")
+	if environmentName == "" {
+		environmentName = conf["environment"]
+		if environmentName == "" {
+			environmentName = "AzurePublicCloud"
+		}
+	}
+	environment, err := azure.EnvironmentFromName(environmentName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure client: %v", err)
+		errorMsg := fmt.Sprintf("failed to look up Azure environment descriptor for name %q: {{err}}",
+			environmentName)
+		return nil, errwrap.Wrapf(errorMsg, err)
+	}
+
+	client, err := storage.NewBasicClientOnSovereignCloud(accountName, accountKey, environment)
+	if err != nil {
+		return nil, errwrap.Wrapf("failed to create Azure client: {{err}}", err)
 	}
 	client.HTTPClient = cleanhttp.DefaultPooledClient()
 
@@ -71,7 +93,7 @@ func NewAzureBackend(conf map[string]string, logger log.Logger) (physical.Backen
 		Access: storage.ContainerAccessTypePrivate,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create %q container: %v", name, err)
+		return nil, errwrap.Wrapf(fmt.Sprintf("failed to create %q container: {{err}}", name), err)
 	}
 
 	maxParStr, ok := conf["max_parallel"]
@@ -82,7 +104,7 @@ func NewAzureBackend(conf map[string]string, logger log.Logger) (physical.Backen
 			return nil, errwrap.Wrapf("failed parsing max_parallel parameter: {{err}}", err)
 		}
 		if logger.IsDebug() {
-			logger.Debug("azure: max_parallel set", "max_parallel", maxParInt)
+			logger.Debug("max_parallel set", "max_parallel", maxParInt)
 		}
 	}
 
@@ -95,7 +117,7 @@ func NewAzureBackend(conf map[string]string, logger log.Logger) (physical.Backen
 }
 
 // Put is used to insert or update an entry
-func (a *AzureBackend) Put(entry *physical.Entry) error {
+func (a *AzureBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"azure", "put"}, time.Now())
 
 	if len(entry.Value) >= MaxBlobSize {
@@ -121,7 +143,7 @@ func (a *AzureBackend) Put(entry *physical.Entry) error {
 }
 
 // Get is used to fetch an entry
-func (a *AzureBackend) Get(key string) (*physical.Entry, error) {
+func (a *AzureBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"azure", "get"}, time.Now())
 
 	a.permitPool.Acquire()
@@ -155,7 +177,7 @@ func (a *AzureBackend) Get(key string) (*physical.Entry, error) {
 }
 
 // Delete is used to permanently delete an entry
-func (a *AzureBackend) Delete(key string) error {
+func (a *AzureBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"azure", "delete"}, time.Now())
 
 	blob := &storage.Blob{
@@ -172,26 +194,39 @@ func (a *AzureBackend) Delete(key string) error {
 
 // List is used to list all the keys under a given
 // prefix, up to the next prefix.
-func (a *AzureBackend) List(prefix string) ([]string, error) {
+func (a *AzureBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"azure", "list"}, time.Now())
 
 	a.permitPool.Acquire()
-	list, err := a.container.ListBlobs(storage.ListBlobsParameters{Prefix: prefix})
-	if err != nil {
-		// Break early.
-		a.permitPool.Release()
-		return nil, err
-	}
-	a.permitPool.Release()
+	defer a.permitPool.Release()
 
+	var marker string
 	keys := []string{}
-	for _, blob := range list.Blobs {
-		key := strings.TrimPrefix(blob.Name, prefix)
-		if i := strings.Index(key, "/"); i == -1 {
-			keys = append(keys, key)
-		} else {
-			keys = strutil.AppendIfMissing(keys, key[:i+1])
+	for {
+		list, err := a.container.ListBlobs(storage.ListBlobsParameters{
+			Prefix:     prefix,
+			Marker:     marker,
+			MaxResults: MaxListResults,
+		})
+		if err != nil {
+			return nil, err
 		}
+
+		for _, blob := range list.Blobs {
+			key := strings.TrimPrefix(blob.Name, prefix)
+			if i := strings.Index(key, "/"); i == -1 {
+				// file
+				keys = append(keys, key)
+			} else {
+				// subdirectory
+				keys = strutil.AppendIfMissing(keys, key[:i+1])
+			}
+		}
+
+		if list.NextMarker == "" {
+			break
+		}
+		marker = list.NextMarker
 	}
 
 	sort.Strings(keys)

@@ -1,6 +1,7 @@
 package dynamodb
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/mgutz/logxi/v1"
+	log "github.com/hashicorp/go-hclog"
 
 	"github.com/armon/go-metrics"
 	"github.com/aws/aws-sdk-go/aws"
@@ -68,13 +69,17 @@ const (
 	DynamoDBWatchRetryInterval = 5 * time.Second
 )
 
+// Verify DynamoDBBackend satisfies the correct interfaces
+var _ physical.Backend = (*DynamoDBBackend)(nil)
+var _ physical.HABackend = (*DynamoDBBackend)(nil)
+var _ physical.Lock = (*DynamoDBLock)(nil)
+
 // DynamoDBBackend is a physical backend that stores data in
 // a DynamoDB table. It can be run in high-availability mode
 // as DynamoDB has locking capabilities.
 type DynamoDBBackend struct {
 	table      string
 	client     *dynamodb.DynamoDB
-	recovery   bool
 	logger     log.Logger
 	haEnabled  bool
 	permitPool *physical.PermitPool
@@ -96,7 +101,6 @@ type DynamoDBLock struct {
 	identity   string
 	held       bool
 	lock       sync.Mutex
-	recovery   bool
 	// Allow modifying the Lock durations for ease of unit testing.
 	renewInterval      time.Duration
 	ttl                time.Duration
@@ -130,7 +134,7 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 	}
 	readCapacity, err := strconv.Atoi(readCapacityString)
 	if err != nil {
-		return nil, fmt.Errorf("invalid read capacity: %s", readCapacityString)
+		return nil, fmt.Errorf("invalid read capacity: %q", readCapacityString)
 	}
 	if readCapacity == 0 {
 		readCapacity = DefaultDynamoDBReadCapacity
@@ -145,7 +149,7 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 	}
 	writeCapacity, err := strconv.Atoi(writeCapacityString)
 	if err != nil {
-		return nil, fmt.Errorf("invalid write capacity: %s", writeCapacityString)
+		return nil, fmt.Errorf("invalid write capacity: %q", writeCapacityString)
 	}
 	if writeCapacity == 0 {
 		writeCapacity = DefaultDynamoDBWriteCapacity
@@ -179,6 +183,19 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 		}
 	}
 
+	dynamodbMaxRetryString := os.Getenv("AWS_DYNAMODB_MAX_RETRIES")
+	if dynamodbMaxRetryString == "" {
+		dynamodbMaxRetryString = conf["dynamodb_max_retries"]
+	}
+	var dynamodbMaxRetry int = aws.UseServiceDefaultRetries
+	if dynamodbMaxRetryString != "" {
+		var err error
+		dynamodbMaxRetry, err = strconv.Atoi(dynamodbMaxRetryString)
+		if err != nil {
+			return nil, fmt.Errorf("invalid max retry: %q", dynamodbMaxRetryString)
+		}
+	}
+
 	credsConfig := &awsutil.CredentialsConfig{
 		AccessKey:    accessKey,
 		SecretKey:    secretKey,
@@ -198,8 +215,15 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 		WithEndpoint(endpoint).
 		WithHTTPClient(&http.Client{
 			Transport: pooledTransport,
-		})
-	client := dynamodb.New(session.New(awsConf))
+		}).
+		WithMaxRetries(dynamodbMaxRetry)
+
+	awsSession, err := session.NewSession(awsConf)
+	if err != nil {
+		return nil, errwrap.Wrapf("Could not establish AWS session: {{err}}", err)
+	}
+
+	client := dynamodb.New(awsSession)
 
 	if err := ensureTableExists(client, table, readCapacity, writeCapacity); err != nil {
 		return nil, err
@@ -211,12 +235,6 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 	}
 	haEnabledBool, _ := strconv.ParseBool(haEnabled)
 
-	recoveryMode := os.Getenv("RECOVERY_MODE")
-	if recoveryMode == "" {
-		recoveryMode = conf["recovery_mode"]
-	}
-	recoveryModeBool, _ := strconv.ParseBool(recoveryMode)
-
 	maxParStr, ok := conf["max_parallel"]
 	var maxParInt int
 	if ok {
@@ -225,7 +243,7 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 			return nil, errwrap.Wrapf("failed parsing max_parallel parameter: {{err}}", err)
 		}
 		if logger.IsDebug() {
-			logger.Debug("physical/dynamodb: max_parallel set", "max_parallel", maxParInt)
+			logger.Debug("max_parallel set", "max_parallel", maxParInt)
 		}
 	}
 
@@ -233,14 +251,13 @@ func NewDynamoDBBackend(conf map[string]string, logger log.Logger) (physical.Bac
 		table:      table,
 		client:     client,
 		permitPool: physical.NewPermitPool(maxParInt),
-		recovery:   recoveryModeBool,
 		haEnabled:  haEnabledBool,
 		logger:     logger,
 	}, nil
 }
 
 // Put is used to insert or update an entry
-func (d *DynamoDBBackend) Put(entry *physical.Entry) error {
+func (d *DynamoDBBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"dynamodb", "put"}, time.Now())
 
 	record := DynamoDBRecord{
@@ -248,9 +265,9 @@ func (d *DynamoDBBackend) Put(entry *physical.Entry) error {
 		Key:   recordKeyForVaultKey(entry.Key),
 		Value: entry.Value,
 	}
-	item, err := dynamodbattribute.ConvertToMap(record)
+	item, err := dynamodbattribute.MarshalMap(record)
 	if err != nil {
-		return fmt.Errorf("could not convert prefix record to DynamoDB item: %s", err)
+		return errwrap.Wrapf("could not convert prefix record to DynamoDB item: {{err}}", err)
 	}
 	requests := []*dynamodb.WriteRequest{{
 		PutRequest: &dynamodb.PutRequest{
@@ -263,9 +280,9 @@ func (d *DynamoDBBackend) Put(entry *physical.Entry) error {
 			Path: recordPathForVaultKey(prefix),
 			Key:  fmt.Sprintf("%s/", recordKeyForVaultKey(prefix)),
 		}
-		item, err := dynamodbattribute.ConvertToMap(record)
+		item, err := dynamodbattribute.MarshalMap(record)
 		if err != nil {
-			return fmt.Errorf("could not convert prefix record to DynamoDB item: %s", err)
+			return errwrap.Wrapf("could not convert prefix record to DynamoDB item: {{err}}", err)
 		}
 		requests = append(requests, &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{
@@ -278,7 +295,7 @@ func (d *DynamoDBBackend) Put(entry *physical.Entry) error {
 }
 
 // Get is used to fetch an entry
-func (d *DynamoDBBackend) Get(key string) (*physical.Entry, error) {
+func (d *DynamoDBBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"dynamodb", "get"}, time.Now())
 
 	d.permitPool.Acquire()
@@ -300,7 +317,7 @@ func (d *DynamoDBBackend) Get(key string) (*physical.Entry, error) {
 	}
 
 	record := &DynamoDBRecord{}
-	if err := dynamodbattribute.ConvertFromMap(resp.Item, record); err != nil {
+	if err := dynamodbattribute.UnmarshalMap(resp.Item, record); err != nil {
 		return nil, err
 	}
 
@@ -311,7 +328,7 @@ func (d *DynamoDBBackend) Get(key string) (*physical.Entry, error) {
 }
 
 // Delete is used to permanently delete an entry
-func (d *DynamoDBBackend) Delete(key string) error {
+func (d *DynamoDBBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"dynamodb", "delete"}, time.Now())
 
 	requests := []*dynamodb.WriteRequest{{
@@ -323,15 +340,33 @@ func (d *DynamoDBBackend) Delete(key string) error {
 		},
 	}}
 
-	// clean up now empty 'folders'
+	// Clean up empty "folders" by looping through all levels of the path to the item being deleted looking for
+	// children. Loop from deepest path to shallowest, and only consider items children if they are not going to be
+	// deleted by our batch delete request. If a path has no valid children, then it should be considered an empty
+	// "folder" and be deleted along with the original item in our batch job. Because we loop from deepest path to
+	// shallowest, once we find a path level that contains valid children we can stop the cleanup operation.
 	prefixes := physical.Prefixes(key)
 	sort.Sort(sort.Reverse(sort.StringSlice(prefixes)))
-	for _, prefix := range prefixes {
-		hasChildren, err := d.hasChildren(prefix)
+	for index, prefix := range prefixes {
+		// Because delete batches its requests, we need to pass keys we know are going to be deleted into
+		// hasChildren so it can exclude those when it determines if there WILL be any children left after
+		// the delete operations have completed.
+		var excluded []string
+		if index == 0 {
+			// This is the value we know for sure is being deleted
+			excluded = append(excluded, recordKeyForVaultKey(key))
+		} else {
+			// The previous path doesn't count as a child, since if we're still looping, we've found no children
+			excluded = append(excluded, recordKeyForVaultKey(prefixes[index-1]))
+		}
+
+		hasChildren, err := d.hasChildren(prefix, excluded)
 		if err != nil {
 			return err
 		}
+
 		if !hasChildren {
+			// If there are no children other than ones we know are being deleted then cleanup empty "folder" pointers
 			requests = append(requests, &dynamodb.WriteRequest{
 				DeleteRequest: &dynamodb.DeleteRequest{
 					Key: map[string]*dynamodb.AttributeValue{
@@ -340,6 +375,12 @@ func (d *DynamoDBBackend) Delete(key string) error {
 					},
 				},
 			})
+		} else {
+			// This loop starts at the deepest path and works backwards looking for children
+			// once a deeper level of the path has been found to have children there is no
+			// more cleanup that needs to happen, otherwise we might remove folder pointers
+			// to that deeper path making it "undiscoverable" with the list operation
+			break
 		}
 	}
 
@@ -348,7 +389,7 @@ func (d *DynamoDBBackend) Delete(key string) error {
 
 // List is used to list all the keys under a given
 // prefix, up to the next prefix.
-func (d *DynamoDBBackend) List(prefix string) ([]string, error) {
+func (d *DynamoDBBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"dynamodb", "list"}, time.Now())
 
 	prefix = strings.TrimSuffix(prefix, "/")
@@ -374,7 +415,7 @@ func (d *DynamoDBBackend) List(prefix string) ([]string, error) {
 	err := d.client.QueryPages(queryInput, func(out *dynamodb.QueryOutput, lastPage bool) bool {
 		var record DynamoDBRecord
 		for _, item := range out.Items {
-			dynamodbattribute.ConvertFromMap(item, &record)
+			dynamodbattribute.UnmarshalMap(item, &record)
 			if !strings.HasPrefix(record.Key, DynamoDBLockPrefix) {
 				keys = append(keys, record.Key)
 			}
@@ -389,9 +430,12 @@ func (d *DynamoDBBackend) List(prefix string) ([]string, error) {
 }
 
 // hasChildren returns true if there exist items below a certain path prefix.
-// To do so, the method fetches such items from DynamoDB. If there are more
-// than one item (which is the "directory" item), there are children.
-func (d *DynamoDBBackend) hasChildren(prefix string) (bool, error) {
+// To do so, the method fetches such items from DynamoDB. This method is primarily
+// used by Delete. Because DynamoDB requests are batched this method is being called
+// before any deletes take place. To account for that hasChildren accepts a slice of
+// strings representing values we expect to find that should NOT be counted as children
+// because they are going to be deleted.
+func (d *DynamoDBBackend) hasChildren(prefix string, exclude []string) (bool, error) {
 	prefix = strings.TrimSuffix(prefix, "/")
 	prefix = escapeEmptyPath(prefix)
 
@@ -407,9 +451,10 @@ func (d *DynamoDBBackend) hasChildren(prefix string) (bool, error) {
 			},
 		},
 		// Avoid fetching too many items from DynamoDB for performance reasons.
-		// We need at least two because one is the directory item, all others
-		// are children.
-		Limit: aws.Int64(2),
+		// We want to know if there are any children we don't expect to see.
+		// Answering that question requires fetching a minimum of one more item
+		// than the number we expect. In most cases this value will be 2
+		Limit: aws.Int64(int64(len(exclude) + 1)),
 	}
 
 	d.permitPool.Acquire()
@@ -419,7 +464,23 @@ func (d *DynamoDBBackend) hasChildren(prefix string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(out.Items) > 1, nil
+	var childrenExist bool
+	for _, item := range out.Items {
+		for _, excluded := range exclude {
+			// Check if we've found an item we didn't expect to. Look for "folder" pointer keys (trailing slash)
+			// and regular value keys (no trailing slash)
+			if *item["Key"].S != excluded && *item["Key"].S != fmt.Sprintf("%s/", excluded) {
+				childrenExist = true
+				break
+			}
+		}
+		if childrenExist {
+			// We only need to find ONE child we didn't expect to.
+			break
+		}
+	}
+
+	return childrenExist, nil
 }
 
 // LockWith is used for mutual exclusion based on the given key.
@@ -433,7 +494,6 @@ func (d *DynamoDBBackend) LockWith(key, value string) (physical.Lock, error) {
 		key:                pkgPath.Join(pkgPath.Dir(key), DynamoDBLockPrefix+pkgPath.Base(key)),
 		value:              value,
 		identity:           identity,
-		recovery:           d.recovery,
 		renewInterval:      DynamoDBLockRenewInterval,
 		ttl:                DynamoDBLockTTL,
 		watchRetryInterval: DynamoDBWatchRetryInterval,
@@ -524,7 +584,7 @@ func (l *DynamoDBLock) Unlock() error {
 	}
 
 	l.held = false
-	if err := l.backend.Delete(l.key); err != nil {
+	if err := l.backend.Delete(context.Background(), l.key); err != nil {
 		return err
 	}
 	return nil
@@ -533,7 +593,7 @@ func (l *DynamoDBLock) Unlock() error {
 // Value checks whether or not the lock is held by any instance of DynamoDBLock,
 // including this one, and returns the current value.
 func (l *DynamoDBLock) Value() (bool, string, error) {
-	entry, err := l.backend.Get(l.key)
+	entry, err := l.backend.Get(context.Background(), l.key)
 	if err != nil {
 		return false, "", err
 	}
@@ -687,8 +747,8 @@ func ensureTableExists(client *dynamodb.DynamoDB, table string, readCapacity, wr
 	_, err := client.DescribeTable(&dynamodb.DescribeTableInput{
 		TableName: aws.String(table),
 	})
-	if awserr, ok := err.(awserr.Error); ok {
-		if awserr.Code() == "ResourceNotFoundException" {
+	if awsError, ok := err.(awserr.Error); ok {
+		if awsError.Code() == "ResourceNotFoundException" {
 			_, err = client.CreateTable(&dynamodb.CreateTableInput{
 				TableName: aws.String(table),
 				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{

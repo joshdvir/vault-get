@@ -1,20 +1,21 @@
 ---
 layout: "api"
-page_title: "TLS Certificate Auth Backend - HTTP API"
-sidebar_current: "docs-http-auth-cert"
+page_title: "TLS Certificate - Auth Methods - HTTP API"
+sidebar_title: "TLS Certificates"
+sidebar_current: "api-http-auth-cert"
 description: |-
   This is the API documentation for the Vault TLS Certificate authentication
-  backend.
+  method.
 ---
 
-# TLS Certificate Auth Backend HTTP API
+# TLS Certificate Auth Method (API)
 
-This is the API documentation for the Vault TLS Certificate authentication 
-backend. For general information about the usage and operation of the TLS
-Certificate backend, please see the [Vault TLS Certificate backend documentation](/docs/auth/cert.html).
+This is the API documentation for the Vault TLS Certificate authentication
+method. For general information about the usage and operation of the TLS
+Certificate method, please see the [Vault TLS Certificate method documentation](/docs/auth/cert.html).
 
-This documentation assumes the TLS Certificate backend is mounted at the
-`/auth/cert` path in Vault. Since it is possible to mount auth backends at any
+This documentation assumes the TLS Certificate method is mounted at the
+`/auth/cert` path in Vault. Since it is possible to enable auth methods at any
 location, please update your API calls accordingly.
 
 ## Create CA Certificate Role
@@ -29,25 +30,69 @@ Sets a CA cert and associated parameters in a role name.
 
 - `name` `(string: <required>)` - The name of the certificate role.
 - `certificate` `(string: <required>)` - The PEM-format CA certificate.
-- `allowed_names` `(string: "")` - Constrain the Common and Alternative Names in 
-  the client certificate with a [globbed pattern]
-  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is 
-  a comma-separated list of patterns.  Authentication requires at least one Name matching at least one pattern.  If not set, defaults to allowing all names.
-- `policies` `(string: "")` - A comma-separated list of policies to set on tokens 
-  issued when authenticating against this CA certificate.
-- `display_name` `(string: "")` -   The `display_name` to set on tokens issued 
-  when authenticating against this CA certificate. If not set, defaults to the 
+- `allowed_names` `(string: "")` - DEPRECATED: Please use the individual
+  `allowed_X_sans` parameters instead. Constrain the Common and Alternative
+  Names in the client certificate with a [globbed pattern]
+  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is
+  a comma-separated list of patterns. Authentication requires at least one Name
+  matching at least one pattern. If not set, defaults to allowing all names.
+- `allowed_common_names` `(string: "" or array: [])` - Constrain the Common
+  Names in the client certificate with a [globbed pattern]
+  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is
+  a comma-separated list of patterns. Authentication requires at least one Name
+  matching at least one pattern. If not set, defaults to allowing all names.
+- `allowed_dns_sans` `(string: "" or array: [])` - Constrain the Alternative
+  Names in the client certificate with a [globbed pattern]
+  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is
+  a comma-separated list of patterns. Authentication requires at least one DNS
+  matching at least one pattern. If not set, defaults to allowing all dns.
+- `allowed_email_sans` `(string: "" or array: [])` - Constrain the Alternative
+  Names in the client certificate with a [globbed pattern]
+  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is
+  a comma-separated list of patterns. Authentication requires at least one
+  Email matching at least one pattern. If not set, defaults to allowing all
+  emails.
+- `allowed_uri_sans` `(string: "" or array: [])` - Constrain the Alternative
+  Names in the client certificate with a [globbed pattern]
+  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is
+  a comma-separated list of URI patterns. Authentication requires at least one
+  URI matching at least one pattern. If not set, defaults to allowing all URIs.
+- `allowed_organizational_units` `(string: "" or array: [])` - Constrain the
+  Organizational Units (OU) in the client certificate with a [globbed pattern]
+  (https://github.com/ryanuber/go-glob/blob/master/README.md#example). Value is
+  a comma-separated list of OU patterns. Authentication requires at least one
+  OU matching at least one pattern. If not set, defaults to allowing all OUs.
+- `required_extensions` `(string: "" or array: [])` - Require specific Custom
+  Extension OIDs to exist and match the pattern. Value is a comma separated
+  string or array of `oid:value`. Expects the extension value to be some type
+  of ASN1 encoded string. All conditions _must_ be met. Supports globbing on
+  `value`.
+- `policies` `(string: "")` - A comma-separated list of policies to set on
+  tokens issued when authenticating against this CA certificate.
+- `display_name` `(string: "")` - The `display_name` to set on tokens issued
+  when authenticating against this CA certificate. If not set, defaults to the
   name of the role.
-- `ttl` `(string: "")` - The TTL period of the token, provided as a number of 
-  seconds. If not provided, the token is valid for the the mount or system 
-  default TTL time, in that order.
+- `ttl` `(string: "")` - The TTL of the token, provided in either number of
+  seconds (`3600`) or a time duration (`1h`). If not provided, the token is
+  valid for the the mount or system default TTL time, in that order.
+- `max_ttl` `(string: "")` - Duration in either number of seconds (`3600`) or a
+  time duration (`1h`) after which the issued token can no longer be renewed.
+- `period` `(string: "")` - Duration in either number of seconds (`3600`) or a
+  time duration (`1h`). If set, the generated token is a periodic token; so long
+  as it is renewed it never expires unless `max_ttl` is also set, but the TTL
+  set on the token at each renewal is fixed to the value specified here. If this
+  value is modified, the token will pick up the new value at its next renewal.
+- `bound_cidrs` `(string: "", or list: [])` – If set, restricts usage of the
+  certificates to client IPs falling within the range of the specified
+  CIDR(s).
 
 ### Sample Payload
 
 ```json
 {
   "certificate": "-----BEGIN CERTIFICATE-----\nMIIEtzCCA5+.......ZRtAfQ6r\nwlW975rYa1ZqEdA=\n-----END CERTIFICATE-----",
-  "display_name": "test"
+  "display_name": "test",
+  "bound_cidrs": ["127.0.0.1/32", "128.252.0.0/16"]
 }
 ```
 
@@ -58,7 +103,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json
-    https://vault.rocks/v1/auth/cert/certs/test-ca
+    http://127.0.0.1:8200/v1/auth/cert/certs/test-ca
 ```
 
 ## Read CA Certificate Role
@@ -78,7 +123,7 @@ Gets information associated with the named role.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/cert/certs/test-ca
+    http://127.0.0.1:8200/v1/auth/cert/certs/test-ca
 ```
 
 ### Sample Response
@@ -93,7 +138,10 @@ $ curl \
     "display_name": "test",
     "policies": "",
     "allowed_names": "",
-    "ttl": 2764800
+    "required_extensions": "",
+    "ttl": 2764800,
+    "max_ttl": 2764800,
+    "period": 0
   },
   "warnings": null,
   "auth": null
@@ -114,7 +162,7 @@ Lists configured certificate names.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
-    https://vault.rocks/v1/auth/cert/certs
+    http://127.0.0.1:8200/v1/auth/cert/certs
 
 ### Sample Response
 
@@ -125,7 +173,7 @@ $ curl \
   "wrap_info": null,
   "data": {
     "keys": [
-      "cert1", 
+      "cert1",
       "cert2"
     ]
   },
@@ -137,7 +185,7 @@ $ curl \
 
 ## Delete Certificate Role
 
-Deletes the named role and CA cert from the backend mount.
+Deletes the named role and CA cert from the method mount.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -153,7 +201,7 @@ Deletes the named role and CA cert from the backend mount.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/cert/certs/cert1
+    http://127.0.0.1:8200/v1/auth/cert/certs/cert1
 ```
 
 ## Create CRL
@@ -165,7 +213,7 @@ Sets a named CRL.
 | `POST`   | `/auth/cert/crls/:name`      | `204 (empty body)`     |
 
 
-### Parameters 
+### Parameters
 
 - `name` `(string: <required>)` - The name of the CRL.
 - `crl` `(string: <required>)` - The PEM format CRL.
@@ -185,7 +233,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --date @payload.json \
-    https://vault.rocks/v1/auth/cert/crls/custom-crl
+    http://127.0.0.1:8200/v1/auth/cert/crls/custom-crl
 ```
 
 ## Read CRL
@@ -207,7 +255,7 @@ arbitrary size, these are returned as strings.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/cert/crls/custom-crl
+    http://127.0.0.1:8200/v1/auth/cert/crls/custom-crl
 ```
 
 ### Sample Response
@@ -227,9 +275,9 @@ $ curl \
 }
 ```
 
-## Delete Certificate Role
+## Delete CRL
 
-Deletes the named role and CA cert from the backend mount.
+Deletes the named CRL from the auth method mount.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -245,12 +293,12 @@ Deletes the named role and CA cert from the backend mount.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/cert/crls/cert1
+    http://127.0.0.1:8200/v1/auth/cert/crls/cert1
 ```
 
-## Configure TLS Certificate Backend
+## Configure TLS Certificate Method
 
-Configuration options for the backend.
+Configuration options for the method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -260,7 +308,7 @@ Configuration options for the backend.
 
 - `disable_binding` `(boolean: false)` - If set, during renewal, skips the
   matching of presented client identity with the client identity used during
-  login. 
+  login.
 
 ### Sample Payload
 
@@ -277,13 +325,17 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --date @payload.json \
-    https://vault.rocks/v1/auth/cert/certs/cert1
+    http://127.0.0.1:8200/v1/auth/cert/certs/cert1
 ```
 
-## Login with TLS Certiicate Backend
+## Login with TLS Certificate Method
 
 Log in and fetch a token. If there is a valid chain to a CA configured in the
-backend and all role constraints are matched, a token will be issued.
+method and all role constraints are matched, a token will be issued. If the
+certificate has DNS SANs in it, each of those will be verified. If Common Name
+is required to be verified, then it should be a fully qualified DNS domain name
+and must be duplicated as a DNS SAN (see
+https://tools.ietf.org/html/rfc6125#section-2.3)
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -291,7 +343,7 @@ backend and all role constraints are matched, a token will be issued.
 
 ### Parameters
 
-- `name` `(string: "")` - Authenticate against only the named certificate role, 
+- `name` `(string: "")` - Authenticate against only the named certificate role,
   returning its policy list if successful. If not set, defaults to trying all
   certificate roles and returning any one that matches.
 
@@ -309,7 +361,7 @@ backend and all role constraints are matched, a token will be issued.
 $ curl \
     --request POST \
     --date @payload.json \
-    https://vault.rocks/v1/auth/cert/login
+    http://127.0.0.1:8200/v1/auth/cert/login
 ```
 
 ### Sample Response
@@ -319,7 +371,7 @@ $ curl \
   "auth": {
     "client_token": "cf95f87d-f95b-47ff-b1f5-ba7bff850425",
     "policies": [
-      "web", 
+      "web",
       "stage"
     ],
     "lease_duration": 3600,

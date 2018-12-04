@@ -7,7 +7,7 @@ IS_OLD_GO := $(shell test $(GO_VERSION) -le 2 && echo true)
 ifeq ($(IS_OLD_GO),true)
 	RACE_FLAG :=
 else
-	RACE_FLAG := -race
+	RACE_FLAG := -race -cpu 1,2,4
 endif
 
 default: fmt vet lint build quicktest
@@ -36,7 +36,23 @@ fmt:
 
 # Only run on go1.5+
 vet:
-	go tool vet -atomic -bool -copylocks -nilfunc -printf -shadow -rangeloops -unreachable -unsafeptr -unusedresult .
+	@go tool -n vet >/dev/null 2>&1; \
+		if [ $$? -eq 0 ]; then \
+			echo "go vet" ; \
+			go tool vet \
+				-atomic \
+				-bool \
+				-copylocks \
+				-nilfunc \
+				-printf \
+				-shadow \
+				-rangeloops \
+				-unreachable \
+				-unsafeptr \
+				-unusedresult \
+				. ; \
+		fi ;
+
 
 # https://github.com/golang/lint
 # go get github.com/golang/lint/golint
@@ -44,7 +60,7 @@ vet:
 # Only run on go1.5+
 lint:
 	@echo golint ./...
-	@OUTPUT=`golint ./... 2>&1`; \
+	@OUTPUT=`command -v golint >/dev/null 2>&1 && golint ./... 2>&1`; \
 	if [ "$$OUTPUT" ]; then \
 		echo "golint errors:"; \
 		echo "$$OUTPUT"; \

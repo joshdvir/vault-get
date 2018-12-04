@@ -1,7 +1,8 @@
 ---
 layout: "api"
 page_title: "/sys/wrapping/lookup - HTTP API"
-sidebar_current: "docs-http-system-wrapping-lookup"
+sidebar_title: "<tt>/sys/wrapping/lookup</tt>"
+sidebar_current: "api-http-system-wrapping-lookup"
 description: |-
   The `/sys/wrapping/lookup` endpoint returns wrapping token properties.
 ---
@@ -37,7 +38,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/sys/wrapping/lookup
+    http://127.0.0.1:8200/v1/sys/wrapping/lookup
 ```
 
 ### Sample Response

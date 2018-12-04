@@ -8,12 +8,12 @@ import (
 	"sync"
 
 	"github.com/hashicorp/go-cleanhttp"
-	"github.com/hashicorp/vault-plugin-auth-gcp/plugin/util"
+	"github.com/hashicorp/go-gcp-common/gcputil"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 	"github.com/hashicorp/vault/version"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
+	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/iam/v1"
 )
 
@@ -26,14 +26,15 @@ type GcpAuthBackend struct {
 	// Locks for guarding service clients
 	clientMutex sync.RWMutex
 
-	// GCP service clients
+	// -- GCP service clients --
 	iamClient *iam.Service
+	gceClient *compute.Service
 }
 
 // Factory returns a new backend as logical.Backend.
-func Factory(conf *logical.BackendConfig) (logical.Backend, error) {
+func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 	b := Backend()
-	if err := b.Setup(conf); err != nil {
+	if err := b.Setup(ctx, conf); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -43,6 +44,7 @@ func Backend() *GcpAuthBackend {
 	b := &GcpAuthBackend{
 		oauthScopes: []string{
 			iam.CloudPlatformScope,
+			compute.ComputeReadonlyScope,
 		},
 	}
 
@@ -54,6 +56,9 @@ func Backend() *GcpAuthBackend {
 		PathsSpecial: &logical.Paths{
 			Unauthenticated: []string{
 				"login",
+			},
+			SealWrapStorage: []string{
+				"config",
 			},
 		},
 		Paths: framework.PathAppend(
@@ -67,7 +72,7 @@ func Backend() *GcpAuthBackend {
 	return b
 }
 
-func (b *GcpAuthBackend) invalidate(key string) {
+func (b *GcpAuthBackend) invalidate(_ context.Context, key string) {
 	switch key {
 	case "config":
 		b.Close()
@@ -80,9 +85,10 @@ func (b *GcpAuthBackend) Close() {
 	defer b.clientMutex.Unlock()
 
 	b.iamClient = nil
+	b.gceClient = nil
 }
 
-func (b *GcpAuthBackend) IAM(s logical.Storage) (*iam.Service, error) {
+func (b *GcpAuthBackend) IAM(ctx context.Context, s logical.Storage) (*iam.Service, error) {
 	b.clientMutex.RLock()
 	if b.iamClient != nil {
 		defer b.clientMutex.RUnlock()
@@ -95,7 +101,7 @@ func (b *GcpAuthBackend) IAM(s logical.Storage) (*iam.Service, error) {
 
 	// Check if client was created during lock switch.
 	if b.iamClient == nil {
-		err := b.initClients(s)
+		err := b.initClients(ctx, s)
 		if err != nil {
 			return nil, err
 		}
@@ -104,25 +110,46 @@ func (b *GcpAuthBackend) IAM(s logical.Storage) (*iam.Service, error) {
 	return b.iamClient, nil
 }
 
+func (b *GcpAuthBackend) GCE(ctx context.Context, s logical.Storage) (*compute.Service, error) {
+	b.clientMutex.RLock()
+	if b.gceClient != nil {
+		defer b.clientMutex.RUnlock()
+		return b.gceClient, nil
+	}
+
+	b.clientMutex.RUnlock()
+	b.clientMutex.Lock()
+	defer b.clientMutex.Unlock()
+
+	// Check if client was created during lock switch.
+	if b.gceClient == nil {
+		err := b.initClients(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return b.gceClient, nil
+}
+
 // Initialize attempts to create GCP clients from stored config.
 // It does not attempt to claim the client lock.
-func (b *GcpAuthBackend) initClients(s logical.Storage) (err error) {
-	config, err := b.config(s)
+func (b *GcpAuthBackend) initClients(ctx context.Context, s logical.Storage) (err error) {
+	config, err := b.config(ctx, s)
 	if err != nil {
 		return err
 	}
 
 	var httpClient *http.Client
 	if config == nil || config.Credentials == nil {
-		// Use Application Default Credentials
-		ctx := context.WithValue(context.Background(), oauth2.HTTPClient, cleanhttp.DefaultClient())
-
-		httpClient, err = google.DefaultClient(ctx, b.oauthScopes...)
+		_, tknSrc, err := gcputil.FindCredentials("", ctx, b.oauthScopes...)
 		if err != nil {
 			return fmt.Errorf("credentials were not configured and fallback to application default credentials failed: %v", err)
 		}
+		cleanCtx := context.WithValue(context.Background(), oauth2.HTTPClient, cleanhttp.DefaultClient())
+		httpClient = oauth2.NewClient(cleanCtx, tknSrc)
 	} else {
-		httpClient, err = util.GetHttpClient(config.Credentials, b.oauthScopes...)
+		httpClient, err = gcputil.GetHttpClient(config.Credentials, b.oauthScopes...)
 		if err != nil {
 			return err
 		}
@@ -137,16 +164,27 @@ func (b *GcpAuthBackend) initClients(s logical.Storage) (err error) {
 	}
 	b.iamClient.UserAgent = userAgentStr
 
+	b.gceClient, err = compute.New(httpClient)
+	if err != nil {
+		b.Close()
+		return err
+	}
+	b.gceClient.UserAgent = userAgentStr
+
 	return nil
 }
 
 const backendHelp = `
-The GCP credential provider allows authentication for Google Cloud Platform entities.
-Currently supports authentication for:
+The GCP backend plugin allows authentication for Google Cloud Platform entities.
+Currently, it supports authentication for:
 
-IAM service accounts:
+* IAM Service Accounts:
 	IAM service accounts provide a signed JSON Web Token (JWT), signed by
-	calling GCP APIs directly or via the Vault CL helper. If successful,
-	Vault will also return a client nonce that is required as the 'jti'
-	field for all subsequent logins by this instance.
+	calling GCP APIs directly or via the Vault CL helper.
+
+* GCE VM Instances:
+	GCE provide a signed instance metadata JSON Web Token (JWT), obtained from the
+	GCE instance metadata server  (http://metadata.google.internal/computeMetadata/v1/instance).
+	Using the /service-accounts/<service-account-name>/identity	endpoint, the instance
+	can obtain this JWT and pass it to Vault on login.
 `

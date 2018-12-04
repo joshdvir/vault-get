@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/mgutz/logxi/v1"
+	log "github.com/hashicorp/go-hclog"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/hashicorp/vault/helper/logformat"
+	"github.com/hashicorp/vault/helper/logging"
 	"github.com/hashicorp/vault/helper/strutil"
 	"github.com/hashicorp/vault/physical"
 	dockertest "gopkg.in/ory-am/dockertest.v2"
@@ -36,7 +36,7 @@ func testConsulBackend(t *testing.T) *ConsulBackend {
 }
 
 func testConsulBackendConfig(t *testing.T, conf *consulConf) *ConsulBackend {
-	logger := logformat.NewVaultLogger(log.LevelTrace)
+	logger := logging.NewVaultLogger(log.Debug)
 
 	be, err := NewConsulBackend(*conf, logger)
 	if err != nil {
@@ -80,6 +80,17 @@ func testSealedFunc(sealedPct float64) physical.SealedFunction {
 	}
 }
 
+func testPerformanceStandbyFunc(perfPct float64) physical.PerformanceStandbyFunction {
+	return func() bool {
+		var ps bool
+		unsealedProb := rand.Float64()
+		if unsealedProb > perfPct {
+			ps = true
+		}
+		return ps
+	}
+}
+
 func TestConsul_ServiceTags(t *testing.T) {
 	consulConfig := map[string]string{
 		"path":                 "seaTech/",
@@ -93,7 +104,7 @@ func TestConsul_ServiceTags(t *testing.T) {
 		"max_parallel":         "4",
 		"disable_registration": "false",
 	}
-	logger := logformat.NewVaultLogger(log.LevelTrace)
+	logger := logging.NewVaultLogger(log.Debug)
 
 	be, err := NewConsulBackend(consulConfig, logger)
 	if err != nil {
@@ -106,14 +117,69 @@ func TestConsul_ServiceTags(t *testing.T) {
 	}
 
 	expected := []string{"deadbeef", "cafeefac", "deadc0de", "feedface"}
-	actual := c.fetchServiceTags(false)
+	actual := c.fetchServiceTags(false, false)
 	if !strutil.EquivalentSlices(actual, append(expected, "standby")) {
 		t.Fatalf("bad: expected:%s actual:%s", append(expected, "standby"), actual)
 	}
 
-	actual = c.fetchServiceTags(true)
+	actual = c.fetchServiceTags(true, false)
 	if !strutil.EquivalentSlices(actual, append(expected, "active")) {
 		t.Fatalf("bad: expected:%s actual:%s", append(expected, "active"), actual)
+	}
+
+	actual = c.fetchServiceTags(false, true)
+	if !strutil.EquivalentSlices(actual, append(expected, "performance-standby")) {
+		t.Fatalf("bad: expected:%s actual:%s", append(expected, "performance-standby"), actual)
+	}
+
+	actual = c.fetchServiceTags(true, true)
+	if !strutil.EquivalentSlices(actual, append(expected, "performance-standby")) {
+		t.Fatalf("bad: expected:%s actual:%s", append(expected, "performance-standby"), actual)
+	}
+}
+
+func TestConsul_ServiceAddress(t *testing.T) {
+	tests := []struct {
+		consulConfig   map[string]string
+		serviceAddrNil bool
+	}{
+		{
+			consulConfig: map[string]string{
+				"service_address": "",
+			},
+		},
+		{
+			consulConfig: map[string]string{
+				"service_address": "vault.example.com",
+			},
+		},
+		{
+			serviceAddrNil: true,
+		},
+	}
+
+	for _, test := range tests {
+		logger := logging.NewVaultLogger(log.Debug)
+
+		be, err := NewConsulBackend(test.consulConfig, logger)
+		if err != nil {
+			t.Fatalf("expected Consul to initialize: %v", err)
+		}
+
+		c, ok := be.(*ConsulBackend)
+		if !ok {
+			t.Fatalf("Expected ConsulBackend")
+		}
+
+		if test.serviceAddrNil {
+			if c.serviceAddress != nil {
+				t.Fatalf("expected service address to be nil")
+			}
+		} else {
+			if c.serviceAddress == nil {
+				t.Fatalf("did not expect service address to be nil")
+			}
+		}
 	}
 }
 
@@ -181,7 +247,7 @@ func TestConsul_newConsulBackend(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		logger := logformat.NewVaultLogger(log.LevelTrace)
+		logger := logging.NewVaultLogger(log.Debug)
 
 		be, err := NewConsulBackend(test.consulConfig, logger)
 		if test.fail {
@@ -209,7 +275,7 @@ func TestConsul_newConsulBackend(t *testing.T) {
 
 		var shutdownCh physical.ShutdownChannel
 		waitGroup := &sync.WaitGroup{}
-		if err := c.RunServiceDiscovery(waitGroup, shutdownCh, test.redirectAddr, testActiveFunc(0.5), testSealedFunc(0.5)); err != nil {
+		if err := c.RunServiceDiscovery(waitGroup, shutdownCh, test.redirectAddr, testActiveFunc(0.5), testSealedFunc(0.5), testPerformanceStandbyFunc(0.5)); err != nil {
 			t.Fatalf("bad: %v", err)
 		}
 
@@ -238,23 +304,36 @@ func TestConsul_newConsulBackend(t *testing.T) {
 
 func TestConsul_serviceTags(t *testing.T) {
 	tests := []struct {
-		active bool
-		tags   []string
+		active      bool
+		perfStandby bool
+		tags        []string
 	}{
 		{
-			active: true,
-			tags:   []string{"active"},
+			active:      true,
+			perfStandby: false,
+			tags:        []string{"active"},
 		},
 		{
-			active: false,
-			tags:   []string{"standby"},
+			active:      false,
+			perfStandby: false,
+			tags:        []string{"standby"},
+		},
+		{
+			active:      false,
+			perfStandby: true,
+			tags:        []string{"performance-standby"},
+		},
+		{
+			active:      true,
+			perfStandby: true,
+			tags:        []string{"performance-standby"},
 		},
 	}
 
 	c := testConsulBackend(t)
 
 	for _, test := range tests {
-		tags := c.fetchServiceTags(test.active)
+		tags := c.fetchServiceTags(test.active, test.perfStandby)
 		if !reflect.DeepEqual(tags[:], test.tags[:]) {
 			t.Errorf("Bad %v: %v %v", test.active, tags, test.tags)
 		}
@@ -343,36 +422,63 @@ func TestConsul_NotifySealedStateChange(t *testing.T) {
 }
 
 func TestConsul_serviceID(t *testing.T) {
-	passingTests := []struct {
+	tests := []struct {
 		name         string
 		redirectAddr string
 		serviceName  string
 		expected     string
+		valid        bool
 	}{
 		{
 			name:         "valid host w/o slash",
 			redirectAddr: "http://127.0.0.1:8200",
 			serviceName:  "sea-tech-astronomy",
 			expected:     "sea-tech-astronomy:127.0.0.1:8200",
+			valid:        true,
 		},
 		{
 			name:         "valid host w/ slash",
 			redirectAddr: "http://127.0.0.1:8200/",
 			serviceName:  "sea-tech-astronomy",
 			expected:     "sea-tech-astronomy:127.0.0.1:8200",
+			valid:        true,
 		},
 		{
 			name:         "valid https host w/ slash",
 			redirectAddr: "https://127.0.0.1:8200/",
 			serviceName:  "sea-tech-astronomy",
 			expected:     "sea-tech-astronomy:127.0.0.1:8200",
+			valid:        true,
+		},
+		{
+			name:         "invalid host name",
+			redirectAddr: "https://127.0.0.1:8200/",
+			serviceName:  "sea_tech_astronomy",
+			expected:     "",
+			valid:        false,
 		},
 	}
 
-	for _, test := range passingTests {
-		c := testConsulBackendConfig(t, &consulConf{
+	logger := logging.NewVaultLogger(log.Debug)
+
+	for _, test := range tests {
+		be, err := NewConsulBackend(consulConf{
 			"service": test.serviceName,
-		})
+		}, logger)
+		if !test.valid {
+			if err == nil {
+				t.Fatalf("expected an error initializing for name %q", test.serviceName)
+			}
+			continue
+		}
+		if test.valid && err != nil {
+			t.Fatalf("expected Consul to initialize: %v", err)
+		}
+
+		c, ok := be.(*ConsulBackend)
+		if !ok {
+			t.Fatalf("Expected ConsulBackend")
+		}
 
 		if err := c.setRedirectAddr(test.redirectAddr); err != nil {
 			t.Fatalf("bad: %s %v", test.name, err)
@@ -410,7 +516,7 @@ func TestConsulBackend(t *testing.T) {
 		client.KV().DeleteTree(randPath, nil)
 	}()
 
-	logger := logformat.NewVaultLogger(log.LevelTrace)
+	logger := logging.NewVaultLogger(log.Debug)
 
 	b, err := NewConsulBackend(map[string]string{
 		"address":      conf.Address,
@@ -451,7 +557,7 @@ func TestConsulHABackend(t *testing.T) {
 		client.KV().DeleteTree(randPath, nil)
 	}()
 
-	logger := logformat.NewVaultLogger(log.LevelTrace)
+	logger := logging.NewVaultLogger(log.Debug)
 
 	b, err := NewConsulBackend(map[string]string{
 		"address":      conf.Address,

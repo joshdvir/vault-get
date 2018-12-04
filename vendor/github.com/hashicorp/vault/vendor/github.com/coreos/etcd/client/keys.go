@@ -17,6 +17,7 @@ package client
 //go:generate codecgen -d 1819 -r "Node|Response|Nodes" -o keys.generated.go keys.go
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,9 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/etcd/pkg/pathutil"
 	"github.com/ugorji/go/codec"
-	"golang.org/x/net/context"
+	"go.etcd.io/etcd/pkg/pathutil"
 )
 
 const (
@@ -653,8 +653,7 @@ func unmarshalHTTPResponse(code int, header http.Header, body []byte) (res *Resp
 	default:
 		err = unmarshalFailedKeysResponse(body)
 	}
-
-	return
+	return res, err
 }
 
 func unmarshalSuccessfulKeysResponse(header http.Header, body []byte) (*Response, error) {

@@ -1,24 +1,25 @@
 ---
 layout: "api"
-page_title: "Okta Auth Backend - HTTP API"
-sidebar_current: "docs-http-auth-okta"
+page_title: "Okta - Auth Methods - HTTP API"
+sidebar_title: "Okta"
+sidebar_current: "api-http-auth-okta"
 description: |-
-  This is the API documentation for the Vault Okta authentication backend.
+  This is the API documentation for the Vault Okta auth method.
 ---
 
-# Okta Auth Backend HTTP API
+# Okta Auth Method (API)
 
-This is the API documentation for the Vault Okta authentication backend. For
-general information about the usage and operation of the Okta backend, please
-see the [Vault Okta backend documentation](/docs/auth/okta.html).
+This is the API documentation for the Vault Okta auth method. For
+general information about the usage and operation of the Okta method, please
+see the [Vault Okta method documentation](/docs/auth/okta.html).
 
-This documentation assumes the Okta backend is mounted at the `/auth/okta`
-path in Vault. Since it is possible to mount auth backends at any location,
+This documentation assumes the Okta method is mounted at the `/auth/okta`
+path in Vault. Since it is possible to enable auth methods at any location,
 please update your API calls accordingly.
 
 ## Create Configuration
 
-Configures the connection parameters for Okta. This path honors the 
+Configures the connection parameters for Okta. This path honors the
 distinction between the `create` and `update` capabilities inside ACL policies.
 
 | Method   | Path                         | Produces               |
@@ -27,21 +28,26 @@ distinction between the `create` and `update` capabilities inside ACL policies.
 
 ### Parameters
 
-- `organization` `(string: <required>)` - Okta organization to authenticate 
-  against.
-- `token` `(string: "")` - Okta admin API token.
-- `base_url` `(string: "")` - The API endpoint to use. Useful if you are using 
-  Okta development accounts.
+- `org_name` `(string: <required>)` - Name of the organization to be used in the
+  Okta API.
+- `api_token` `(string: "")` - Okta API token. This is required to query Okta
+  for user group membership. If this is not supplied only locally configured
+  groups will be enabled.
+- `base_url` `(string: "")` -  If set, will be used as the base domain
+  for API requests.  Examples are okta.com, oktapreview.com, and okta-emea.com.
 - `ttl` `(string: "")` - Duration after which authentication will be expired.
-- `max_ttl` `(string: "")` - Maximum duration after which authentication will 
+- `max_ttl` `(string: "")` - Maximum duration after which authentication will
   be expired.
+- `bypass_okta_mfa` `(bool: false)` - Whether to bypass an Okta MFA request.
+  Useful if using one of Vault's built-in MFA mechanisms, but this will also
+  cause certain other statuses to be ignored, such as `PASSWORD_EXPIRED`.
 
 ### Sample Payload
 
 ```json
 {
-  "organization": "example",
-  "token": "abc123"
+  "org_name": "example",
+  "api_token": "abc123"
 }
 ```
 
@@ -52,7 +58,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/okta/config
+    http://127.0.0.1:8200/v1/auth/okta/config
 ```
 
 ## Read Configuration
@@ -68,7 +74,7 @@ Reads the Okta configuration.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/okta/config
+    http://127.0.0.1:8200/v1/auth/okta/config
 ```
 
 ### Sample Response
@@ -80,9 +86,9 @@ $ curl \
   "lease_duration": 0,
   "renewable": false,
   "data": {
-    "organization": "example",
-    "token": "abc123",
-    "base_url": "",
+    "org_name": "example",
+    "api_token": "abc123",
+    "base_url": "okta.com",
     "ttl": "",
     "max_ttl": ""
   },
@@ -92,7 +98,7 @@ $ curl \
 
 ## List Users
 
-List the users configurated in the Okta backend.
+List the users configurated in the Okta method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -104,7 +110,7 @@ List the users configurated in the Okta backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
-    https://vault.rocks/v1/auth/okta/users
+    http://127.0.0.1:8200/v1/auth/okta/users
 ```
 
 ### Sample Response
@@ -137,14 +143,15 @@ Registers a new user and maps a set of policies to it.
 ### Parameters
 
 - `username` `(string: <required>)` - Name of the user.
-- `groups` `(string: "")` - Comma-separated list of groups associated with the 
-  user.
-- `policies` `(string: "")` - Comma-separated list of policies associated with 
-  the user.
+- `groups` `(array: [])` - List or comma-separated string of groups associated with the user.
+- `policies` `(array: [])` - List or comma-separated string of policies associated with the user.
 
 ```json
 {
-  "policies": "dev,prod",
+  "policies": [
+    "dev",
+    "prod"
+  ]
 }
 ```
 
@@ -155,7 +162,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/okta/users/fred
+    http://127.0.0.1:8200/v1/auth/okta/users/fred
 ```
 
 ## Read User
@@ -175,7 +182,7 @@ Reads the properties of an existing username.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/okta/users/test-user
+    http://127.0.0.1:8200/v1/auth/okta/users/test-user
 ```
 
 ### Sample Response
@@ -187,8 +194,11 @@ $ curl \
   "lease_duration": 0,
   "renewable": false,
   "data": {
-    "policies": "default,dev",
-    "groups": ""
+    "policies": [
+      "default",
+      "dev",
+    ],
+    "groups": []
   },
   "warnings": null
 }
@@ -196,7 +206,7 @@ $ curl \
 
 ## Delete User
 
-Deletes an existing username from the backend.
+Deletes an existing username from the method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -212,12 +222,12 @@ Deletes an existing username from the backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/okta/users/test-user
+    http://127.0.0.1:8200/v1/auth/okta/users/test-user
 ```
 
 ## List Groups
 
-List the groups configurated in the Okta backend.
+List the groups configurated in the Okta method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -229,7 +239,7 @@ List the groups configurated in the Okta backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
-    https://vault.rocks/v1/auth/okta/groups
+    http://127.0.0.1:8200/v1/auth/okta/groups
 ```
 
 ### Sample Response
@@ -242,7 +252,7 @@ $ curl \
   "data": {
     "keys": [
       "admins",
-	    "dev-users"
+      "dev-users"
     ]
   },
   "lease_duration": 0,
@@ -262,12 +272,14 @@ Registers a new group and maps a set of policies to it.
 ### Parameters
 
 - `name` `(string: <required>)` - The name of the group.
-- `policies` `(string: "")` - Comma-separated list of policies associated with 
-  the group.
+- `policies` `(array: [])` - The list or comma-separated string of policies associated with the group.
 
 ```json
 {
-  "policies": "dev,prod",
+  "policies": [
+    "dev",
+    "prod"
+  ]
 }
 ```
 
@@ -278,7 +290,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/okta/groups/admins
+    http://127.0.0.1:8200/v1/auth/okta/groups/admins
 ```
 
 ## Read Group
@@ -298,7 +310,7 @@ Reads the properties of an existing group.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/okta/groups/admins
+    http://127.0.0.1:8200/v1/auth/okta/groups/admins
 ```
 
 ### Sample Response
@@ -310,7 +322,10 @@ $ curl \
   "lease_duration": 0,
   "renewable": false,
   "data": {
-    "policies": "default,admin"
+    "policies": [
+      "default",
+      "admin"
+    ]
   },
   "warnings": null
 }
@@ -318,7 +333,7 @@ $ curl \
 
 ## Delete Group
 
-Deletes an existing group from the backend.
+Deletes an existing group from the method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -334,7 +349,7 @@ Deletes an existing group from the backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/okta/users/test-user
+    http://127.0.0.1:8200/v1/auth/okta/users/test-user
 ```
 
 ## Login
@@ -348,7 +363,7 @@ Login with the username and password.
 ### Parameters
 
 - `username` `(string: <required>)` - Username for this user.
-- `password` `(string: <required>)` - Password for the autheticating user.
+- `password` `(string: <required>)` - Password for the authenticating user.
 
 ### Sample Payload
 
@@ -362,9 +377,9 @@ Login with the username and password.
 
 ```
 $ curl \
-    --header "X-Vault-Token: ..." \
     --request POST \
-    https://vault.rocks/v1/auth/okta/login/fred
+    --data @payload.json \
+    http://127.0.0.1:8200/v1/auth/okta/login/fred
 ```
 
 ### Sample Response

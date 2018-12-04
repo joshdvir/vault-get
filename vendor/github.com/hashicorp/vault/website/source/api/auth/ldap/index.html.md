@@ -1,24 +1,25 @@
 ---
 layout: "api"
-page_title: "LDAP Auth Backend - HTTP API"
-sidebar_current: "docs-http-auth-ldap"
+page_title: "LDAP - Auth Methods - HTTP API"
+sidebar_title: "LDAP"
+sidebar_current: "api-http-auth-ldap"
 description: |-
-  This is the API documentation for the Vault LDAP authentication backend.
+  This is the API documentation for the Vault LDAP auth method.
 ---
 
-# LDAP Auth Backend HTTP API
+# LDAP Auth Method (API)
 
-This is the API documentation for the Vault LDAP authentication backend. For
-general information about the usage and operation of the LDAP backend, please
-see the [Vault LDAP backend documentation](/docs/auth/ldap.html).
+This is the API documentation for the Vault LDAP auth method. For
+general information about the usage and operation of the LDAP method, please
+see the [Vault LDAP method documentation](/docs/auth/ldap.html).
 
-This documentation assumes the LDAP backend is mounted at the `/auth/ldap`
-path in Vault. Since it is possible to mount auth backends at any location,
+This documentation assumes the LDAP method is mounted at the `/auth/ldap`
+path in Vault. Since it is possible to enable auth methods at any location,
 please update your API calls accordingly.
 
-## Configure LDAP Backend
+## Configure LDAP
 
-This endpoint configures the LDAP authentication backend.
+This endpoint configures the LDAP auth method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -26,17 +27,24 @@ This endpoint configures the LDAP authentication backend.
 
 ### Parameters
 
-- `url` `(string: <required>)` – The LDAP server to connect to. Examples: 
-  `ldap://ldap.myorg.com`, `ldaps://ldap.myorg.com:636`
-- `starttls` `(bool: false)` – If true, issues a `StartTLS` command after 
+- `url` `(string: <required>)` – The LDAP server to connect to. Examples:
+  `ldap://ldap.myorg.com`, `ldaps://ldap.myorg.com:636`. Multiple URLs can be
+  specified with commas, e.g. `ldap://ldap.myorg.com,ldap://ldap2.myorg.com`;
+  these will be tried in-order.
+- `case_sensitive_names` `(bool: false)` – If set, user and group names
+  assigned to policies within the backend will be case sensitive. Otherwise,
+  names will be normalized to lower case. Case will still be preserved when
+  sending the username to the LDAP server at login time; this is only for
+  matching local user/group definitions.
+- `starttls` `(bool: false)` – If true, issues a `StartTLS` command after
   establishing an unencrypted connection.
-- `tls_min_version` `(string: tls12)` – Minimum TLS version to use. Accepted 
+- `tls_min_version` `(string: tls12)` – Minimum TLS version to use. Accepted
   values are `tls10`, `tls11` or `tls12`.
-- `tls_max_version` `(string: tls12)` – Maximum TLS version to use. Accepted 
+- `tls_max_version` `(string: tls12)` – Maximum TLS version to use. Accepted
   values are `tls10`, `tls11` or `tls12`.
-- `insecure_tls` `(bool: false)` – If true, skips LDAP server SSL certificate 
+- `insecure_tls` `(bool: false)` – If true, skips LDAP server SSL certificate
   verification - insecure, use with caution!
-- `certificate` `(string: "")` – CA certificate to use when verifying LDAP server 
+- `certificate` `(string: "")` – CA certificate to use when verifying LDAP server
   certificate, must be x509 PEM encoded.
 - `binddn` `(string: "")` – Distinguished name of object to bind when performing
   user search.  Example: `cn=vault,ou=Users,dc=example,dc=com`
@@ -44,17 +52,17 @@ This endpoint configures the LDAP authentication backend.
   user search.
 - `userdn` `(string: "")` – Base DN under which to perform user search. Example:
   `ou=Users,dc=example,dc=com`
-- `userattr` `(string: "")` – Attribute on user attribute object matching the 
+- `userattr` `(string: "")` – Attribute on user attribute object matching the
   username passed when authenticating. Examples: `sAMAccountName`, `cn`, `uid`
 - `discoverdn` `(bool: false)` – Use anonymous bind to discover the bind DN of a
   user.
-- `deny_null_bind` `(bool: true)` – This option prevents users from bypassing 
+- `deny_null_bind` `(bool: true)` – This option prevents users from bypassing
   authentication when providing an empty password.
 - `upndomain` `(string: "")` – The userPrincipalDomain used to construct the UPN
   string for the authenticating user. The constructed UPN will appear as
   `[username]@UPNDomain`. Example: `example.com`, which will cause vault to bind
   as `username@example.com`.
-- `groupfilter` `(string: "")` – Go template used when constructing the group 
+- `groupfilter` `(string: "")` – Go template used when constructing the group
   membership query. The template can access the following context variables:
   \[`UserDN`, `Username`\]. The default is
   `(|(memberUid={{.Username}})(member={{.UserDN}})(uniqueMember={{.UserDN}}))`,
@@ -62,11 +70,11 @@ This endpoint configures the LDAP authentication backend.
   nested group resolution for Active Directory, instead use the following
   query: `(&(objectClass=group)(member:1.2.840.113556.1.4.1941:={{.UserDN}}))`.
 - `groupdn` `(string: "")` – LDAP search base to use for group membership
-  search. This can be the root containing either groups or users.  Example: 
+  search. This can be the root containing either groups or users.  Example:
   `ou=Groups,dc=example,dc=com`
-- `groupattr` `(string: "")` – LDAP attribute to follow on objects returned by 
+- `groupattr` `(string: "")` – LDAP attribute to follow on objects returned by
   `groupfilter` in order to enumerate user group membership. Examples: for
-  groupfilter queries returning _group_ objects, use: `cn`. For queries 
+  groupfilter queries returning _group_ objects, use: `cn`. For queries
   returning _user_ objects, use: `memberOf`. The default is `cn`.
 
 ### Sample Request
@@ -76,7 +84,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/ldap/config
+    http://127.0.0.1:8200/v1/auth/ldap/config
 ```
 
 ### Sample Payload
@@ -101,7 +109,7 @@ $ curl \
 
 ## Read LDAP Configuration
 
-This endpoint retrieves the LDAP configuration for the authentication backend.
+This endpoint retrieves the LDAP configuration for the auth method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -112,7 +120,7 @@ This endpoint retrieves the LDAP configuration for the authentication backend.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/ldap/config
+    http://127.0.0.1:8200/v1/auth/ldap/config
 ```
 
 ### Sample Response
@@ -148,7 +156,7 @@ $ curl \
 
 ## List LDAP Groups
 
-This endpoint returns a list of existing groups in the backend.
+This endpoint returns a list of existing groups in the method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -160,7 +168,7 @@ This endpoint returns a list of existing groups in the backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
-    https://vault.rocks/v1/auth/ldap/groups
+    http://127.0.0.1:8200/v1/auth/ldap/groups
 ```
 
 ### Sample Response
@@ -199,7 +207,7 @@ This endpoint returns the policies associated with a LDAP group.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/ldap/groups/admins
+    http://127.0.0.1:8200/v1/auth/ldap/groups/admins
 ```
 
 ### Sample Response
@@ -207,7 +215,10 @@ $ curl \
 ```json
 {
   "data": {
-    "policies": "admin,default"
+    "policies": [
+      "admin",
+      "default"
+    ]
   },
   "renewable": false,
   "lease_id": ""
@@ -245,7 +256,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/ldap/groups/admins
+    http://127.0.0.1:8200/v1/auth/ldap/groups/admins
 ```
 
 ## Delete LDAP Group
@@ -266,16 +277,16 @@ This endpoint deletes the LDAP group and policy association.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/ldap/groups/admins
+    http://127.0.0.1:8200/v1/auth/ldap/groups/admins
 ```
 
 ## List LDAP Users
 
-This endpoint returns a list of existing users in the backend.
+This endpoint returns a list of existing users in the method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
-| `LIST`   | `/auth/ldap/users`          | `200 application/json` |
+| `LIST`   | `/auth/ldap/users`           | `200 application/json` |
 
 ### Sample Request
 
@@ -283,7 +294,7 @@ This endpoint returns a list of existing users in the backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
-    https://vault.rocks/v1/auth/ldap/users
+    http://127.0.0.1:8200/v1/auth/ldap/users
 ```
 
 ### Sample Response
@@ -322,7 +333,7 @@ This endpoint returns the policies associated with a LDAP user.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/ldap/users/mitchellh
+    http://127.0.0.1:8200/v1/auth/ldap/users/mitchellh
 ```
 
 ### Sample Response
@@ -330,7 +341,10 @@ $ curl \
 ```json
 {
   "data": {
-    "policies": "admin,default",
+    "policies": [
+      "admin",
+      "default"
+    ],
     "groups": ""
   },
   "renewable": false,
@@ -371,7 +385,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/ldap/users/mitchellh
+    http://127.0.0.1:8200/v1/auth/ldap/users/mitchellh
 ```
 
 ## Delete LDAP User
@@ -392,7 +406,7 @@ This endpoint deletes the LDAP user and policy association.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/ldap/users/mitchellh
+    http://127.0.0.1:8200/v1/auth/ldap/users/mitchellh
 ```
 
 ## Login with LDAP User
@@ -422,7 +436,7 @@ This endpoint allows you to log in with LDAP credentials
 $ curl \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/ldap/login/mitchellh
+    http://127.0.0.1:8200/v1/auth/ldap/login/mitchellh
 ```
 
 ### Sample Response
@@ -447,4 +461,3 @@ $ curl \
   }
 }
 ```
-

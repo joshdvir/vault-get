@@ -1,7 +1,8 @@
 ---
 layout: "api"
 page_title: "/sys/config/cors - HTTP API"
-sidebar_current: "docs-http-system-config-cors"
+sidebar_title: "<tt>/sys/config/cors</tt>"
+sidebar_current: "api-http-system-config-cors"
 description: |-
   The '/sys/config/cors' endpoint configures how the Vault server responds to cross-origin requests.
 ---
@@ -26,7 +27,7 @@ This endpoint returns the current CORS configuration.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/sys/config/cors
+    http://127.0.0.1:8200/v1/sys/config/cors
 ```
 
 ### Sample Response
@@ -41,6 +42,7 @@ $ curl \
     "X-Vault-AWS-IAM-Server-ID",
     "X-Vault-No-Request-Forwarding",
     "X-Vault-Token",
+    "Authorization",
     "X-Vault-Wrap-Format",
     "X-Vault-Wrap-TTL",
   ]
@@ -78,7 +80,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request PUT \
     --data @payload.json \
-    https://vault.rocks/v1/sys/config/cors
+    http://127.0.0.1:8200/v1/sys/config/cors
 ```
 
 ## Delete CORS Settings
@@ -95,5 +97,5 @@ This endpoint removes any CORS configuration.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/sys/config/cors
+    http://127.0.0.1:8200/v1/sys/config/cors
 ```

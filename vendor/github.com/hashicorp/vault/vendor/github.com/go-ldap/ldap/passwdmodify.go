@@ -129,16 +129,16 @@ func (l *Conn) PasswordModify(passwordModifyRequest *PasswordModifyRequest) (*Pa
 			return nil, NewError(resultCode, errors.New(resultDescription))
 		}
 	} else {
-		return nil, NewError(ErrorUnexpectedResponse, fmt.Errorf("Unexpected Response: %d", packet.Children[1].Tag))
+		return nil, NewError(ErrorUnexpectedResponse, fmt.Errorf("unexpected Response: %d", packet.Children[1].Tag))
 	}
 
 	extendedResponse := packet.Children[1]
 	for _, child := range extendedResponse.Children {
 		if child.Tag == 11 {
-			passwordModifyReponseValue := ber.DecodePacket(child.Data.Bytes())
-			if len(passwordModifyReponseValue.Children) == 1 {
-				if passwordModifyReponseValue.Children[0].Tag == 0 {
-					result.GeneratedPassword = ber.DecodeString(passwordModifyReponseValue.Children[0].Data.Bytes())
+			passwordModifyResponseValue := ber.DecodePacket(child.Data.Bytes())
+			if len(passwordModifyResponseValue.Children) == 1 {
+				if passwordModifyResponseValue.Children[0].Tag == 0 {
+					result.GeneratedPassword = ber.DecodeString(passwordModifyResponseValue.Children[0].Data.Bytes())
 				}
 			}
 		}

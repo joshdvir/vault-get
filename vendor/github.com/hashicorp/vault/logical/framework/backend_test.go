@@ -1,10 +1,13 @@
 package framework
 
 import (
+	"context"
 	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"net/http"
 
 	"github.com/hashicorp/vault/logical"
 )
@@ -42,7 +45,7 @@ func TestBackend_impl(t *testing.T) {
 }
 
 func TestBackendHandleRequest(t *testing.T) {
-	callback := func(req *logical.Request, data *FieldData) (*logical.Response, error) {
+	callback := func(ctx context.Context, req *logical.Request, data *FieldData) (*logical.Response, error) {
 		return &logical.Response{
 			Data: map[string]interface{}{
 				"value": data.Get("value"),
@@ -64,7 +67,7 @@ func TestBackendHandleRequest(t *testing.T) {
 		},
 	}
 
-	resp, err := b.HandleRequest(&logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
 		Path:      "foo/bar",
 		Data:      map[string]interface{}{"value": "42"},
@@ -78,7 +81,7 @@ func TestBackendHandleRequest(t *testing.T) {
 }
 
 func TestBackendHandleRequest_badwrite(t *testing.T) {
-	callback := func(req *logical.Request, data *FieldData) (*logical.Response, error) {
+	callback := func(ctx context.Context, req *logical.Request, data *FieldData) (*logical.Response, error) {
 		return &logical.Response{
 			Data: map[string]interface{}{
 				"value": data.Get("value").(bool),
@@ -100,7 +103,7 @@ func TestBackendHandleRequest_badwrite(t *testing.T) {
 		},
 	}
 
-	_, err := b.HandleRequest(&logical.Request{
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
 		Path:      "foo/bar",
 		Data:      map[string]interface{}{"value": "3false3"},
@@ -113,7 +116,7 @@ func TestBackendHandleRequest_badwrite(t *testing.T) {
 }
 
 func TestBackendHandleRequest_404(t *testing.T) {
-	callback := func(req *logical.Request, data *FieldData) (*logical.Response, error) {
+	callback := func(ctx context.Context, req *logical.Request, data *FieldData) (*logical.Response, error) {
 		return &logical.Response{
 			Data: map[string]interface{}{
 				"value": data.Get("value"),
@@ -135,7 +138,7 @@ func TestBackendHandleRequest_404(t *testing.T) {
 		},
 	}
 
-	_, err := b.HandleRequest(&logical.Request{
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
 		Path:      "foo/baz",
 		Data:      map[string]interface{}{"value": "84"},
@@ -159,7 +162,7 @@ func TestBackendHandleRequest_help(t *testing.T) {
 		},
 	}
 
-	resp, err := b.HandleRequest(&logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.HelpOperation,
 		Path:      "foo/bar",
 		Data:      map[string]interface{}{"value": "42"},
@@ -177,7 +180,7 @@ func TestBackendHandleRequest_helpRoot(t *testing.T) {
 		Help: "42",
 	}
 
-	resp, err := b.HandleRequest(&logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.HelpOperation,
 		Path:      "",
 	})
@@ -192,8 +195,7 @@ func TestBackendHandleRequest_helpRoot(t *testing.T) {
 func TestBackendHandleRequest_renewAuth(t *testing.T) {
 	b := &Backend{}
 
-	resp, err := b.HandleRequest(logical.RenewAuthRequest(
-		"/foo", &logical.Auth{}, nil))
+	resp, err := b.HandleRequest(context.Background(), logical.RenewAuthRequest("/foo", &logical.Auth{}, nil))
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -203,9 +205,9 @@ func TestBackendHandleRequest_renewAuth(t *testing.T) {
 }
 
 func TestBackendHandleRequest_renewAuthCallback(t *testing.T) {
-	var called uint32
-	callback := func(*logical.Request, *FieldData) (*logical.Response, error) {
-		atomic.AddUint32(&called, 1)
+	called := new(uint32)
+	callback := func(context.Context, *logical.Request, *FieldData) (*logical.Response, error) {
+		atomic.AddUint32(called, 1)
 		return nil, nil
 	}
 
@@ -213,19 +215,18 @@ func TestBackendHandleRequest_renewAuthCallback(t *testing.T) {
 		AuthRenew: callback,
 	}
 
-	_, err := b.HandleRequest(logical.RenewAuthRequest(
-		"/foo", &logical.Auth{}, nil))
+	_, err := b.HandleRequest(context.Background(), logical.RenewAuthRequest("/foo", &logical.Auth{}, nil))
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if v := atomic.LoadUint32(&called); v != 1 {
+	if v := atomic.LoadUint32(called); v != 1 {
 		t.Fatalf("bad: %#v", v)
 	}
 }
 func TestBackendHandleRequest_renew(t *testing.T) {
-	var called uint32
-	callback := func(*logical.Request, *FieldData) (*logical.Response, error) {
-		atomic.AddUint32(&called, 1)
+	called := new(uint32)
+	callback := func(context.Context, *logical.Request, *FieldData) (*logical.Response, error) {
+		atomic.AddUint32(called, 1)
 		return nil, nil
 	}
 
@@ -237,51 +238,19 @@ func TestBackendHandleRequest_renew(t *testing.T) {
 		Secrets: []*Secret{secret},
 	}
 
-	_, err := b.HandleRequest(logical.RenewRequest(
-		"/foo", secret.Response(nil, nil).Secret, nil))
+	_, err := b.HandleRequest(context.Background(), logical.RenewRequest("/foo", secret.Response(nil, nil).Secret, nil))
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if v := atomic.LoadUint32(&called); v != 1 {
+	if v := atomic.LoadUint32(called); v != 1 {
 		t.Fatalf("bad: %#v", v)
 	}
 }
 
-func TestBackendHandleRequest_renewExtend(t *testing.T) {
-	sysView := logical.StaticSystemView{
-		DefaultLeaseTTLVal: 5 * time.Minute,
-		MaxLeaseTTLVal:     30 * time.Hour,
-	}
-
-	secret := &Secret{
-		Type:            "foo",
-		Renew:           LeaseExtend(0, 0, sysView),
-		DefaultDuration: 5 * time.Minute,
-	}
-	b := &Backend{
-		Secrets: []*Secret{secret},
-	}
-
-	req := logical.RenewRequest("/foo", secret.Response(nil, nil).Secret, nil)
-	req.Secret.IssueTime = time.Now()
-	req.Secret.Increment = 1 * time.Hour
-	resp, err := b.HandleRequest(req)
-	if err != nil {
-		t.Fatalf("err: %s", err)
-	}
-	if resp == nil || resp.Secret == nil {
-		t.Fatal("should have secret")
-	}
-
-	if resp.Secret.TTL < 59*time.Minute || resp.Secret.TTL > 61*time.Minute {
-		t.Fatalf("bad: %s", resp.Secret.TTL)
-	}
-}
-
 func TestBackendHandleRequest_revoke(t *testing.T) {
-	var called uint32
-	callback := func(*logical.Request, *FieldData) (*logical.Response, error) {
-		atomic.AddUint32(&called, 1)
+	called := new(uint32)
+	callback := func(context.Context, *logical.Request, *FieldData) (*logical.Response, error) {
+		atomic.AddUint32(called, 1)
 		return nil, nil
 	}
 
@@ -293,23 +262,21 @@ func TestBackendHandleRequest_revoke(t *testing.T) {
 		Secrets: []*Secret{secret},
 	}
 
-	_, err := b.HandleRequest(logical.RevokeRequest(
-		"/foo", secret.Response(nil, nil).Secret, nil))
+	_, err := b.HandleRequest(context.Background(), logical.RevokeRequest("/foo", secret.Response(nil, nil).Secret, nil))
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if v := atomic.LoadUint32(&called); v != 1 {
+	if v := atomic.LoadUint32(called); v != 1 {
 		t.Fatalf("bad: %#v", v)
 	}
 }
 
 func TestBackendHandleRequest_rollback(t *testing.T) {
-	var called uint32
-	callback := func(req *logical.Request, kind string, data interface{}) error {
+	called := new(uint32)
+	callback := func(_ context.Context, req *logical.Request, kind string, data interface{}) error {
 		if data == "foo" {
-			atomic.AddUint32(&called, 1)
+			atomic.AddUint32(called, 1)
 		}
-
 		return nil
 	}
 
@@ -319,13 +286,13 @@ func TestBackendHandleRequest_rollback(t *testing.T) {
 	}
 
 	storage := new(logical.InmemStorage)
-	if _, err := PutWAL(storage, "kind", "foo"); err != nil {
+	if _, err := PutWAL(context.Background(), storage, "kind", "foo"); err != nil {
 		t.Fatalf("err: %s", err)
 	}
 
 	time.Sleep(10 * time.Millisecond)
 
-	_, err := b.HandleRequest(&logical.Request{
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.RollbackOperation,
 		Path:      "",
 		Storage:   storage,
@@ -333,18 +300,17 @@ func TestBackendHandleRequest_rollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if v := atomic.LoadUint32(&called); v != 1 {
+	if v := atomic.LoadUint32(called); v != 1 {
 		t.Fatalf("bad: %#v", v)
 	}
 }
 
 func TestBackendHandleRequest_rollbackMinAge(t *testing.T) {
-	var called uint32
-	callback := func(req *logical.Request, kind string, data interface{}) error {
+	called := new(uint32)
+	callback := func(_ context.Context, req *logical.Request, kind string, data interface{}) error {
 		if data == "foo" {
-			atomic.AddUint32(&called, 1)
+			atomic.AddUint32(called, 1)
 		}
-
 		return nil
 	}
 
@@ -354,11 +320,11 @@ func TestBackendHandleRequest_rollbackMinAge(t *testing.T) {
 	}
 
 	storage := new(logical.InmemStorage)
-	if _, err := PutWAL(storage, "kind", "foo"); err != nil {
+	if _, err := PutWAL(context.Background(), storage, "kind", "foo"); err != nil {
 		t.Fatalf("err: %s", err)
 	}
 
-	_, err := b.HandleRequest(&logical.Request{
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.RollbackOperation,
 		Path:      "",
 		Storage:   storage,
@@ -366,13 +332,13 @@ func TestBackendHandleRequest_rollbackMinAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if v := atomic.LoadUint32(&called); v != 0 {
+	if v := atomic.LoadUint32(called); v != 0 {
 		t.Fatalf("bad: %#v", v)
 	}
 }
 
 func TestBackendHandleRequest_unsupportedOperation(t *testing.T) {
-	callback := func(req *logical.Request, data *FieldData) (*logical.Response, error) {
+	callback := func(ctx context.Context, req *logical.Request, data *FieldData) (*logical.Response, error) {
 		return &logical.Response{
 			Data: map[string]interface{}{
 				"value": data.Get("value"),
@@ -394,7 +360,7 @@ func TestBackendHandleRequest_unsupportedOperation(t *testing.T) {
 		},
 	}
 
-	_, err := b.HandleRequest(&logical.Request{
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
 		Path:      "foo/bar",
 		Data:      map[string]interface{}{"value": "84"},
@@ -405,7 +371,7 @@ func TestBackendHandleRequest_unsupportedOperation(t *testing.T) {
 }
 
 func TestBackendHandleRequest_urlPriority(t *testing.T) {
-	callback := func(req *logical.Request, data *FieldData) (*logical.Response, error) {
+	callback := func(ctx context.Context, req *logical.Request, data *FieldData) (*logical.Response, error) {
 		return &logical.Response{
 			Data: map[string]interface{}{
 				"value": data.Get("value"),
@@ -427,7 +393,7 @@ func TestBackendHandleRequest_urlPriority(t *testing.T) {
 		},
 	}
 
-	resp, err := b.HandleRequest(&logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
 		Path:      "foo/42",
 		Data:      map[string]interface{}{"value": "84"},
@@ -567,6 +533,11 @@ func TestFieldSchemaDefaultOrZero(t *testing.T) {
 		"default duration not set": {
 			&FieldSchema{Type: TypeDurationSecond},
 			0,
+		},
+
+		"default header not set": {
+			&FieldSchema{Type: TypeHeader},
+			http.Header{},
 		},
 	}
 

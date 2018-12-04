@@ -1,6 +1,7 @@
 package mssql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sort"
@@ -11,10 +12,13 @@ import (
 	"github.com/armon/go-metrics"
 	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/hashicorp/errwrap"
+	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/helper/strutil"
 	"github.com/hashicorp/vault/physical"
-	log "github.com/mgutz/logxi/v1"
 )
+
+// Verify MSSQLBackend satisfies the correct interfaces
+var _ physical.Backend = (*MSSQLBackend)(nil)
 
 type MSSQLBackend struct {
 	dbTable    string
@@ -49,7 +53,7 @@ func NewMSSQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 			return nil, errwrap.Wrapf("failed parsing max_parallel parameter: {{err}}", err)
 		}
 		if logger.IsDebug() {
-			logger.Debug("mysql: max_parallel set", "max_parallel", maxParInt)
+			logger.Debug("max_parallel set", "max_parallel", maxParInt)
 		}
 	} else {
 		maxParInt = physical.DefaultParallelOperations
@@ -96,13 +100,13 @@ func NewMSSQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 
 	db, err := sql.Open("mssql", connectionString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to mssql: %v", err)
+		return nil, errwrap.Wrapf("failed to connect to mssql: {{err}}", err)
 	}
 
 	db.SetMaxOpenConns(maxParInt)
 
 	if _, err := db.Exec("IF NOT EXISTS(SELECT * FROM sys.databases WHERE name = '" + database + "') CREATE DATABASE " + database); err != nil {
-		return nil, fmt.Errorf("failed to create mssql database: %v", err)
+		return nil, errwrap.Wrapf("failed to create mssql database: {{err}}", err)
 	}
 
 	dbTable := database + "." + schema + "." + table
@@ -111,7 +115,7 @@ func NewMSSQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 
 	if schema != "dbo" {
 		if _, err := db.Exec("USE " + database); err != nil {
-			return nil, fmt.Errorf("failed to switch mssql database: %v", err)
+			return nil, errwrap.Wrapf("failed to switch mssql database: {{err}}", err)
 		}
 
 		var num int
@@ -120,16 +124,16 @@ func NewMSSQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 		switch {
 		case err == sql.ErrNoRows:
 			if _, err := db.Exec("CREATE SCHEMA " + schema); err != nil {
-				return nil, fmt.Errorf("failed to create mssql schema: %v", err)
+				return nil, errwrap.Wrapf("failed to create mssql schema: {{err}}", err)
 			}
 
 		case err != nil:
-			return nil, fmt.Errorf("failed to check if mssql schema exists: %v", err)
+			return nil, errwrap.Wrapf("failed to check if mssql schema exists: {{err}}", err)
 		}
 	}
 
 	if _, err := db.Exec(createQuery); err != nil {
-		return nil, fmt.Errorf("failed to create mssql table: %v", err)
+		return nil, errwrap.Wrapf("failed to create mssql table: {{err}}", err)
 	}
 
 	m := &MSSQLBackend{
@@ -160,7 +164,7 @@ func NewMSSQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 func (m *MSSQLBackend) prepare(name, query string) error {
 	stmt, err := m.client.Prepare(query)
 	if err != nil {
-		return fmt.Errorf("failed to prepare '%s': %v", name, err)
+		return errwrap.Wrapf(fmt.Sprintf("failed to prepare %q: {{err}}", name), err)
 	}
 
 	m.statements[name] = stmt
@@ -168,7 +172,7 @@ func (m *MSSQLBackend) prepare(name, query string) error {
 	return nil
 }
 
-func (m *MSSQLBackend) Put(entry *physical.Entry) error {
+func (m *MSSQLBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"mssql", "put"}, time.Now())
 
 	m.permitPool.Acquire()
@@ -182,7 +186,7 @@ func (m *MSSQLBackend) Put(entry *physical.Entry) error {
 	return nil
 }
 
-func (m *MSSQLBackend) Get(key string) (*physical.Entry, error) {
+func (m *MSSQLBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"mssql", "get"}, time.Now())
 
 	m.permitPool.Acquire()
@@ -206,7 +210,7 @@ func (m *MSSQLBackend) Get(key string) (*physical.Entry, error) {
 	return ent, nil
 }
 
-func (m *MSSQLBackend) Delete(key string) error {
+func (m *MSSQLBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"mssql", "delete"}, time.Now())
 
 	m.permitPool.Acquire()
@@ -220,7 +224,7 @@ func (m *MSSQLBackend) Delete(key string) error {
 	return nil
 }
 
-func (m *MSSQLBackend) List(prefix string) ([]string, error) {
+func (m *MSSQLBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"mssql", "list"}, time.Now())
 
 	m.permitPool.Acquire()
@@ -236,7 +240,7 @@ func (m *MSSQLBackend) List(prefix string) ([]string, error) {
 		var key string
 		err = rows.Scan(&key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan rows: %v", err)
+			return nil, errwrap.Wrapf("failed to scan rows: {{err}}", err)
 		}
 
 		key = strings.TrimPrefix(key, prefix)

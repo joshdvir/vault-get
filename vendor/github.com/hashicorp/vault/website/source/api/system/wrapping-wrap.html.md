@@ -1,7 +1,8 @@
 ---
 layout: "api"
 page_title: "/sys/wrapping/wrap - HTTP API"
-sidebar_current: "docs-http-system-wrapping-wrap"
+sidebar_title: "<tt>/sys/wrapping/wrap</tt>"
+sidebar_current: "api-http-system-wrapping-wrap"
 description: |-
   The `/sys/wrapping/wrap` endpoint wraps the given values in a
   response-wrapped token.
@@ -44,7 +45,7 @@ $ curl \
     --header "X-Vault-Wrap-TTL: 60" \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/sys/wrapping/wrap
+    http://127.0.0.1:8200/v1/sys/wrapping/wrap
 ```
 
 ### Sample Response

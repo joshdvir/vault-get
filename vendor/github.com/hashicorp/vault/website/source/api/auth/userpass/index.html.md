@@ -1,20 +1,21 @@
 ---
 layout: "api"
-page_title: "Userpass Auth Backend - HTTP API"
-sidebar_current: "docs-http-auth-userpass"
+page_title: "Userpass - Auth Methods - HTTP API"
+sidebar_title: "Username & Password"
+sidebar_current: "api-http-auth-userpass"
 description: |-
   This is the API documentation for the Vault username and password
-  authentication backend.
+  auth method.
 ---
 
-# Username & Password Auth Backend HTTP API
+# Userpass Auth Method (HTTP API)
 
-This is the API documentation for the Vault Username & Password authentication backend. For
-general information about the usage and operation of the Username and Password backend, please
-see the [Vault Userpass backend documentation](/docs/auth/userpass.html).
+This is the API documentation for the Vault Username & Password auth method. For
+general information about the usage and operation of the Username and Password method, please
+see the [Vault Userpass method documentation](/docs/auth/userpass.html).
 
-This documentation assumes the Username & Password backend is mounted at the `/auth/userpass`
-path in Vault. Since it is possible to mount auth backends at any location,
+This documentation assumes the Username & Password method is mounted at the `/auth/userpass`
+path in Vault. Since it is possible to enable auth methods at any location,
 please update your API calls accordingly.
 
 ## Create/Update User
@@ -28,19 +29,23 @@ Create a new user or update an existing user. This path honors the distinction b
 ### Parameters
 
 - `username` `(string: <required>)` – The username for the user.
-- `password` `(string: <required>)` - The password for the user. Only required 
+- `password` `(string: <required>)` - The password for the user. Only required
   when creating the user.
 - `policies` `(string: "")` – Comma-separated list of policies. If set to empty
   string, only the `default` policy will be applicable to the user.
 - `ttl` `(string: "")` - The lease duration which decides login expiration.
 - `max_ttl` `(string: "")` - Maximum duration after which login should expire.
+- `bound_cidrs` `(string: "", or list: [])` – If set, restricts usage of the
+  login and token to client IPs falling within the range of the specified
+  CIDR(s).
 
 ### Sample Payload
 
 ```json
 {
   "password": "superSecretPassword",
-  "policies": "admin,default"
+  "policies": "admin,default",
+  "bound_cidrs": ["127.0.0.1/32", "128.252.0.0/16"]
 }
 ```
 
@@ -51,7 +56,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/userpass/users/mitchellh
+    http://127.0.0.1:8200/v1/auth/userpass/users/mitchellh
 ```
 
 ## Read User
@@ -67,7 +72,7 @@ Reads the properties of an existing username.
 ```
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://vault.rocks/v1/auth/userpass/users/mitchellh
+    http://127.0.0.1:8200/v1/auth/userpass/users/mitchellh
 ```
 
 ### Sample Response
@@ -89,7 +94,7 @@ $ curl \
 
 ## Delete User
 
-This endpoint deletes the user from the backend.
+This endpoint deletes the user from the method.
 
 | Method   | Path                         | Produces               |
 | :------- | :--------------------------- | :--------------------- |
@@ -105,7 +110,7 @@ This endpoint deletes the user from the backend.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://vault.rocks/v1/auth/userpass/users/mitchellh
+    http://127.0.0.1:8200/v1/auth/userpass/users/mitchellh
 ```
 
 ## Update Password on User
@@ -136,7 +141,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/userpass/users/mitchellh/password
+    http://127.0.0.1:8200/v1/auth/userpass/users/mitchellh/password
 ```
 
 ## Update Policies on User
@@ -167,7 +172,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/userpass/users/mitchellh/policies
+    http://127.0.0.1:8200/v1/auth/userpass/users/mitchellh/policies
 ```
 
 ## List Users
@@ -184,7 +189,7 @@ List available userpass users.
 $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST
-    https://vault.rocks/v1/auth/userpass/users
+    http://127.0.0.1:8200/v1/auth/userpass/users
 ```
 
 ### Sample Response
@@ -225,10 +230,9 @@ Login with the username and password.
 
 ```
 $ curl \
-    --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/auth/userpass/login/mitchellh
+    http://127.0.0.1:8200/v1/auth/userpass/login/mitchellh
 ```
 
 ### Sample Response

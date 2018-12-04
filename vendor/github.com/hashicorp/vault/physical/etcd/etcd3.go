@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,13 +12,13 @@ import (
 	"time"
 
 	metrics "github.com/armon/go-metrics"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/coreos/etcd/pkg/transport"
+	"github.com/hashicorp/errwrap"
+	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/helper/strutil"
 	"github.com/hashicorp/vault/physical"
-	log "github.com/mgutz/logxi/v1"
-	"golang.org/x/net/context"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
+	"go.etcd.io/etcd/pkg/transport"
 )
 
 // EtcdBackend is a physical backend that stores data at specific
@@ -40,6 +41,11 @@ const (
 	// for most cases, even with internal retry.
 	etcd3RequestTimeout = 5 * time.Second
 )
+
+// Verify EtcdBackend satisfies the correct interfaces
+var _ physical.Backend = (*EtcdBackend)(nil)
+var _ physical.HABackend = (*EtcdBackend)(nil)
+var _ physical.Lock = (*EtcdLock)(nil)
 
 // newEtcd3Backend constructs a etcd3 backend.
 func newEtcd3Backend(conf map[string]string, logger log.Logger) (physical.Backend, error) {
@@ -80,9 +86,9 @@ func newEtcd3Backend(conf map[string]string, logger log.Logger) (physical.Backen
 	ca, hasCa := conf["tls_ca_file"]
 	if (hasCert && hasKey) || hasCa {
 		tls := transport.TLSInfo{
-			CAFile:   ca,
-			CertFile: cert,
-			KeyFile:  key,
+			TrustedCAFile: ca,
+			CertFile:      cert,
+			KeyFile:       key,
 		}
 
 		tlscfg, err := tls.ClientConfig()
@@ -108,6 +114,15 @@ func newEtcd3Backend(conf map[string]string, logger log.Logger) (physical.Backen
 		cfg.Password = password
 	}
 
+	if maxReceive, ok := conf["max_receive_size"]; ok {
+		// grpc converts this to uint32 internally, so parse as that to avoid passing invalid values
+		val, err := strconv.ParseUint(maxReceive, 10, 32)
+		if err != nil {
+			return nil, errwrap.Wrapf(fmt.Sprintf("value of 'max_receive_size' (%v) could not be understood: {{err}}", maxReceive), err)
+		}
+		cfg.MaxCallRecvMsgSize = int(val)
+	}
+
 	etcd, err := clientv3.New(cfg)
 	if err != nil {
 		return nil, err
@@ -119,7 +134,7 @@ func newEtcd3Backend(conf map[string]string, logger log.Logger) (physical.Backen
 	}
 	sync, err := strconv.ParseBool(ssync)
 	if err != nil {
-		return nil, fmt.Errorf("value of 'sync' (%v) could not be understood", err)
+		return nil, errwrap.Wrapf(fmt.Sprintf("value of 'sync' (%v) could not be understood: {{err}}", ssync), err)
 	}
 
 	if sync {
@@ -140,7 +155,7 @@ func newEtcd3Backend(conf map[string]string, logger log.Logger) (physical.Backen
 	}, nil
 }
 
-func (c *EtcdBackend) Put(entry *physical.Entry) error {
+func (c *EtcdBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"etcd", "put"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -152,7 +167,7 @@ func (c *EtcdBackend) Put(entry *physical.Entry) error {
 	return err
 }
 
-func (c *EtcdBackend) Get(key string) (*physical.Entry, error) {
+func (c *EtcdBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"etcd", "get"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -177,7 +192,7 @@ func (c *EtcdBackend) Get(key string) (*physical.Entry, error) {
 	}, nil
 }
 
-func (c *EtcdBackend) Delete(key string) error {
+func (c *EtcdBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"etcd", "delete"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -192,7 +207,7 @@ func (c *EtcdBackend) Delete(key string) error {
 	return nil
 }
 
-func (c *EtcdBackend) List(prefix string) ([]string, error) {
+func (c *EtcdBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"etcd", "list"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -200,7 +215,7 @@ func (c *EtcdBackend) List(prefix string) ([]string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), etcd3RequestTimeout)
 	defer cancel()
-	prefix = path.Join(c.path, prefix)
+	prefix = path.Join(c.path, prefix) + "/"
 	resp, err := c.etcd.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
@@ -228,7 +243,7 @@ func (e *EtcdBackend) HAEnabled() bool {
 	return e.haEnabled
 }
 
-// EtcdLock emplements a lock using and etcd backend.
+// EtcdLock implements a lock using and etcd backend.
 type EtcdLock struct {
 	lock sync.Mutex
 	held bool
@@ -244,18 +259,11 @@ type EtcdLock struct {
 
 // Lock is used for mutual exclusion based on the given key.
 func (c *EtcdBackend) LockWith(key, value string) (physical.Lock, error) {
-	session, err := concurrency.NewSession(c.etcd, concurrency.WithTTL(etcd3LockTimeoutInSeconds))
-	if err != nil {
-		return nil, err
-	}
-
 	p := path.Join(c.path, key)
 	return &EtcdLock{
-		etcdSession: session,
-		etcdMu:      concurrency.NewMutex(session, p),
-		prefix:      p,
-		value:       value,
-		etcd:        c.etcd,
+		prefix: p,
+		value:  value,
+		etcd:   c.etcd,
 	}, nil
 }
 
@@ -263,8 +271,26 @@ func (c *EtcdLock) Lock(stopCh <-chan struct{}) (<-chan struct{}, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
+	if c.etcdMu == nil {
+		if err := c.initMu(); err != nil {
+			return nil, err
+		}
+	}
+
 	if c.held {
 		return nil, EtcdLockHeldError
+	}
+
+	select {
+	case _, ok := <-c.etcdSession.Done():
+		if !ok {
+			// The session's done channel is closed, so the session is over,
+			// and we need a new lock with a new session.
+			if err := c.initMu(); err != nil {
+				return nil, err
+			}
+		}
+	default:
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -319,4 +345,14 @@ func (c *EtcdLock) Value() (bool, string, error) {
 	}
 
 	return true, string(resp.Kvs[0].Value), nil
+}
+
+func (c *EtcdLock) initMu() error {
+	session, err := concurrency.NewSession(c.etcd, concurrency.WithTTL(etcd3LockTimeoutInSeconds))
+	if err != nil {
+		return err
+	}
+	c.etcdSession = session
+	c.etcdMu = concurrency.NewMutex(session, c.prefix)
+	return nil
 }

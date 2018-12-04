@@ -1,14 +1,16 @@
 package radius
 
 import (
+	"context"
+
 	"github.com/hashicorp/vault/helper/mfa"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 )
 
-func Factory(conf *logical.BackendConfig) (logical.Backend, error) {
+func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 	b := Backend()
-	if err := b.Setup(conf); err != nil {
+	if err := b.Setup(ctx, conf); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -25,6 +27,10 @@ func Backend() *backend {
 			Unauthenticated: []string{
 				"login",
 				"login/*",
+			},
+
+			SealWrapStorage: []string{
+				"config",
 			},
 		},
 
@@ -53,8 +59,8 @@ a RADIUS server, checking username and associating users
 to set of policies.
 
 Configuration of the server is done through the "config" and "users"
-endpoints by a user with approriate access mandated by policy.
-Authentication is then done by suppying the two fields for "login".
+endpoints by a user with appropriate access mandated by policy.
+Authentication is then done by supplying the two fields for "login".
 
 The backend optionally allows to grant a set of policies to any 
 user that successfully authenticates against the RADIUS server, 

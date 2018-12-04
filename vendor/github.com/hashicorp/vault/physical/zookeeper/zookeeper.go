@@ -1,17 +1,25 @@
 package zookeeper
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
+	"net"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hashicorp/errwrap"
+	log "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/vault/helper/parseutil"
 	"github.com/hashicorp/vault/physical"
-	log "github.com/mgutz/logxi/v1"
 
 	metrics "github.com/armon/go-metrics"
+	"github.com/hashicorp/vault/helper/tlsutil"
 	"github.com/samuel/go-zookeeper/zk"
 )
 
@@ -22,6 +30,11 @@ const (
 	// key.
 	ZKNodeFilePrefix = "_"
 )
+
+// Verify ZooKeeperBackend satisfies the correct interfaces
+var _ physical.Backend = (*ZooKeeperBackend)(nil)
+var _ physical.HABackend = (*ZooKeeperBackend)(nil)
+var _ physical.Lock = (*ZooKeeperHALock)(nil)
 
 // ZooKeeperBackend is a physical backend that stores data at specific
 // prefix within ZooKeeper. It is used in production situations as
@@ -82,9 +95,15 @@ func NewZooKeeperBackend(conf map[string]string, logger log.Logger) (physical.Ba
 		}
 	}
 
-	acl := []zk.ACL{{zk.PermAll, schema, owner}}
+	acl := []zk.ACL{
+		{
+			Perms:  zk.PermAll,
+			Scheme: schema,
+			ID:     owner,
+		},
+	}
 
-	// Authnetication info
+	// Authentication info
 	var schemaAndUser string
 	var useAddAuth bool
 	schemaAndUser, useAddAuth = conf["auth_info"]
@@ -106,16 +125,16 @@ func NewZooKeeperBackend(conf map[string]string, logger log.Logger) (physical.Ba
 	}
 
 	// We have all of the configuration in hand - let's try and connect to ZK
-	client, _, err := zk.Connect(strings.Split(machines, ","), time.Second)
+	client, _, err := createClient(conf, machines, time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("client setup failed: %v", err)
+		return nil, errwrap.Wrapf("client setup failed: {{err}}", err)
 	}
 
 	// ZK AddAuth API if the user asked for it
 	if useAddAuth {
 		err = client.AddAuth(schema, []byte(owner))
 		if err != nil {
-			return nil, fmt.Errorf("ZooKeeper rejected authentication information provided at auth_info: %v", err)
+			return nil, errwrap.Wrapf("ZooKeeper rejected authentication information provided at auth_info: {{err}}", err)
 		}
 	}
 
@@ -127,6 +146,162 @@ func NewZooKeeperBackend(conf map[string]string, logger log.Logger) (physical.Ba
 		logger: logger,
 	}
 	return c, nil
+}
+
+func caseInsenstiveContains(superset, val string) bool {
+	return strings.Contains(strings.ToUpper(superset), strings.ToUpper(val))
+}
+
+// Returns a client for ZK connection. Config value 'tls_enabled' determines if TLS is enabled or not.
+func createClient(conf map[string]string, machines string, timeout time.Duration) (*zk.Conn, <-chan zk.Event, error) {
+	// 'tls_enabled' defaults to false
+	isTlsEnabled := false
+	isTlsEnabledStr, ok := conf["tls_enabled"]
+
+	if ok && isTlsEnabledStr != "" {
+		parsedBoolval, err := parseutil.ParseBool(isTlsEnabledStr)
+		if err != nil {
+			return nil, nil, errwrap.Wrapf("failed parsing tls_enabled parameter: {{err}}", err)
+		}
+		isTlsEnabled = parsedBoolval
+	}
+
+	if isTlsEnabled {
+		// Create a custom Dialer with cert configuration for TLS handshake.
+		tlsDialer := customTLSDial(conf, machines)
+		options := zk.WithDialer(tlsDialer)
+		return zk.Connect(strings.Split(machines, ","), timeout, options)
+	} else {
+		return zk.Connect(strings.Split(machines, ","), timeout)
+	}
+}
+
+// Vault config file properties:
+// 1. tls_skip_verify: skip host name verification.
+// 2. tls_min_version: minimum supported/acceptable tls version
+// 3. tls_cert_file: Cert file Absolute path
+// 4. tls_key_file: Key file Absolute path
+// 5. tls_ca_file: ca file absolute path
+// 6. tls_verify_ip: If set to true, server's IP is verified in certificate if tls_skip_verify is false.
+func customTLSDial(conf map[string]string, machines string) zk.Dialer {
+	return func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		// Sets the serverName. *Note* the addr field comes in as an IP address
+		serverName, _, sParseErr := net.SplitHostPort(addr)
+		if sParseErr != nil {
+			// If the address is only missing port, assign the full address anyway
+			if strings.Contains(sParseErr.Error(), "missing port") {
+				serverName = addr
+			} else {
+				return nil, errwrap.Wrapf("failed parsing the server address for 'serverName' setting {{err}}", sParseErr)
+			}
+		}
+
+		insecureSkipVerify := false
+		tlsSkipVerify, ok := conf["tls_skip_verify"]
+
+		if ok && tlsSkipVerify != "" {
+			b, err := parseutil.ParseBool(tlsSkipVerify)
+			if err != nil {
+				return nil, errwrap.Wrapf("failed parsing tls_skip_verify parameter: {{err}}", err)
+			}
+			insecureSkipVerify = b
+		}
+
+		if !insecureSkipVerify {
+			// If tls_verify_ip is set to false, Server's DNS name is verified in the CN/SAN of the certificate.
+			// if tls_verify_ip is true, Server's IP is verified in the CN/SAN of the certificate.
+			// These checks happen only when tls_skip_verify is set to false.
+			// This value defaults to false
+			ipSanCheck := false
+			configVal, lookupOk := conf["tls_verify_ip"]
+
+			if lookupOk && configVal != "" {
+				parsedIpSanCheck, ipSanErr := parseutil.ParseBool(configVal)
+				if ipSanErr != nil {
+					return nil, errwrap.Wrapf("failed parsing tls_verify_ip parameter: {{err}}", ipSanErr)
+				}
+				ipSanCheck = parsedIpSanCheck
+			}
+			// The addr/serverName parameter to this method comes in as an IP address.
+			// Here we lookup the DNS name and assign it to serverName if ipSanCheck is set to false
+			if !ipSanCheck {
+				lookupAddressMany, lookupErr := net.LookupAddr(serverName)
+				if lookupErr == nil {
+					for _, lookupAddress := range lookupAddressMany {
+						// strip the trailing '.' from lookupAddr
+						if lookupAddress[len(lookupAddress)-1] == '.' {
+							lookupAddress = lookupAddress[:len(lookupAddress)-1]
+						}
+						// Allow serverName to be replaced only if the lookupname is part of the
+						// supplied machine names
+						// If there is no match, the serverName will continue to be an IP value.
+						if caseInsenstiveContains(machines, lookupAddress) {
+							serverName = lookupAddress
+							break
+						}
+					}
+				}
+			}
+
+		}
+
+		tlsMinVersionStr, ok := conf["tls_min_version"]
+		if !ok {
+			// Set the default value
+			tlsMinVersionStr = "tls12"
+		}
+
+		tlsMinVersion, ok := tlsutil.TLSLookup[tlsMinVersionStr]
+		if !ok {
+			return nil, fmt.Errorf("invalid 'tls_min_version'")
+		}
+
+		tlsClientConfig := &tls.Config{
+			MinVersion:         tlsMinVersion,
+			InsecureSkipVerify: insecureSkipVerify,
+			ServerName:         serverName,
+		}
+
+		_, okCert := conf["tls_cert_file"]
+		_, okKey := conf["tls_key_file"]
+
+		if okCert && okKey {
+			tlsCert, err := tls.LoadX509KeyPair(conf["tls_cert_file"], conf["tls_key_file"])
+			if err != nil {
+				return nil, errwrap.Wrapf("client tls setup failed for ZK: {{err}}", err)
+			}
+
+			tlsClientConfig.Certificates = []tls.Certificate{tlsCert}
+		}
+
+		if tlsCaFile, ok := conf["tls_ca_file"]; ok {
+			caPool := x509.NewCertPool()
+
+			data, err := ioutil.ReadFile(tlsCaFile)
+			if err != nil {
+				return nil, errwrap.Wrapf("failed to read ZK CA file: {{err}}", err)
+			}
+
+			if !caPool.AppendCertsFromPEM(data) {
+				return nil, fmt.Errorf("failed to parse ZK CA certificate")
+			}
+			tlsClientConfig.RootCAs = caPool
+		}
+
+		if network != "tcp" {
+			return nil, fmt.Errorf("unsupported network %q", network)
+		}
+
+		tcpConn, err := net.DialTimeout("tcp", addr, timeout)
+		if err != nil {
+			return nil, err
+		}
+		conn := tls.Client(tcpConn, tlsClientConfig)
+		if err := conn.Handshake(); err != nil {
+			return nil, fmt.Errorf("Handshake failed with Zookeeper : %v", err)
+		}
+		return conn, nil
+	}
 }
 
 // ensurePath is used to create each node in the path hierarchy.
@@ -160,7 +335,7 @@ func (c *ZooKeeperBackend) ensurePath(path string, value []byte) error {
 	return nil
 }
 
-// cleanupLogicalPath is used to remove all empty nodes, begining with deepest one,
+// cleanupLogicalPath is used to remove all empty nodes, beginning with deepest one,
 // aborting on first non-empty one, up to top-level node.
 func (c *ZooKeeperBackend) cleanupLogicalPath(path string) error {
 	nodes := strings.Split(path, "/")
@@ -169,23 +344,19 @@ func (c *ZooKeeperBackend) cleanupLogicalPath(path string) error {
 
 		_, stat, err := c.client.Exists(fullPath)
 		if err != nil {
-			return fmt.Errorf("Failed to acquire node data: %s", err)
+			return errwrap.Wrapf("failed to acquire node data: {{err}}", err)
 		}
 
 		if stat.DataLength > 0 && stat.NumChildren > 0 {
-			msgFmt := "Node %s is both of data and leaf type ??"
-			panic(fmt.Sprintf(msgFmt, fullPath))
+			panic(fmt.Sprintf("node %q is both of data and leaf type", fullPath))
 		} else if stat.DataLength > 0 {
-			msgFmt := "Node %s is a data node, this is either a bug or " +
-				"backend data is corrupted"
-			panic(fmt.Sprintf(msgFmt, fullPath))
+			panic(fmt.Sprintf("node %q is a data node, this is either a bug or backend data is corrupted", fullPath))
 		} else if stat.NumChildren > 0 {
 			return nil
 		} else {
 			// Empty node, lets clean it up!
 			if err := c.client.Delete(fullPath, -1); err != nil && err != zk.ErrNoNode {
-				msgFmt := "Removal of node `%s` failed: `%v`"
-				return fmt.Errorf(msgFmt, fullPath, err)
+				return errwrap.Wrapf(fmt.Sprintf("removal of node %q failed: {{err}}", fullPath), err)
 			}
 		}
 	}
@@ -198,7 +369,7 @@ func (c *ZooKeeperBackend) nodePath(key string) string {
 }
 
 // Put is used to insert or update an entry
-func (c *ZooKeeperBackend) Put(entry *physical.Entry) error {
+func (c *ZooKeeperBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"zookeeper", "put"}, time.Now())
 
 	// Attempt to set the full path
@@ -213,7 +384,7 @@ func (c *ZooKeeperBackend) Put(entry *physical.Entry) error {
 }
 
 // Get is used to fetch an entry
-func (c *ZooKeeperBackend) Get(key string) (*physical.Entry, error) {
+func (c *ZooKeeperBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"zookeeper", "get"}, time.Now())
 
 	// Attempt to read the full path
@@ -240,7 +411,7 @@ func (c *ZooKeeperBackend) Get(key string) (*physical.Entry, error) {
 }
 
 // Delete is used to permanently delete an entry
-func (c *ZooKeeperBackend) Delete(key string) error {
+func (c *ZooKeeperBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"zookeeper", "delete"}, time.Now())
 
 	if key == "" {
@@ -253,7 +424,7 @@ func (c *ZooKeeperBackend) Delete(key string) error {
 
 	// Mask if the node does not exist
 	if err != nil && err != zk.ErrNoNode {
-		return fmt.Errorf("Failed to remove %q: %v", fullPath, err)
+		return errwrap.Wrapf(fmt.Sprintf("failed to remove %q: {{err}}", fullPath), err)
 	}
 
 	err = c.cleanupLogicalPath(key)
@@ -263,7 +434,7 @@ func (c *ZooKeeperBackend) Delete(key string) error {
 
 // List is used ot list all the keys under a given
 // prefix, up to the next prefix.
-func (c *ZooKeeperBackend) List(prefix string) ([]string, error) {
+func (c *ZooKeeperBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"zookeeper", "list"}, time.Now())
 
 	// Query the children at the full path
@@ -295,12 +466,11 @@ func (c *ZooKeeperBackend) List(prefix string) ([]string, error) {
 				// under the lock file; just treat it like the file Vault expects
 				children = append(children, key[1:])
 			} else {
-				msgFmt := "Node %q is both of data and leaf type ??"
-				panic(fmt.Sprintf(msgFmt, childPath))
+				panic(fmt.Sprintf("node %q is both of data and leaf type", childPath))
 			}
 		} else if stat.DataLength == 0 {
 			// No, we cannot differentiate here on number of children as node
-			// can have all it leafs remoed, and it still is a node.
+			// can have all it leafs removed, and it still is a node.
 			children = append(children, key+"/")
 		} else {
 			children = append(children, key[1:])
@@ -313,9 +483,10 @@ func (c *ZooKeeperBackend) List(prefix string) ([]string, error) {
 // LockWith is used for mutual exclusion based on the given key.
 func (c *ZooKeeperBackend) LockWith(key, value string) (physical.Lock, error) {
 	l := &ZooKeeperHALock{
-		in:    c,
-		key:   key,
-		value: value,
+		in:     c,
+		key:    key,
+		value:  value,
+		logger: c.logger,
 	}
 	return l, nil
 }
@@ -328,13 +499,15 @@ func (c *ZooKeeperBackend) HAEnabled() bool {
 
 // ZooKeeperHALock is a ZooKeeper Lock implementation for the HABackend
 type ZooKeeperHALock struct {
-	in    *ZooKeeperBackend
-	key   string
-	value string
+	in     *ZooKeeperBackend
+	key    string
+	value  string
+	logger log.Logger
 
 	held      bool
 	localLock sync.Mutex
 	leaderCh  chan struct{}
+	stopCh    <-chan struct{}
 	zkLock    *zk.Lock
 }
 
@@ -370,12 +543,14 @@ func (i *ZooKeeperHALock) Lock(stopCh <-chan struct{}) (<-chan struct{}, error) 
 	// Watch for Events which could result in loss of our zkLock and close(i.leaderCh)
 	currentVal, _, lockeventCh, err := i.in.client.GetW(lockpath)
 	if err != nil {
-		return nil, fmt.Errorf("unable to watch HA lock: %v", err)
+		return nil, errwrap.Wrapf("unable to watch HA lock: {{err}}", err)
 	}
 	if i.value != string(currentVal) {
 		return nil, fmt.Errorf("lost HA lock immediately before watch")
 	}
 	go i.monitorLock(lockeventCh, i.leaderCh)
+
+	i.stopCh = stopCh
 
 	return i.leaderCh, nil
 }
@@ -433,16 +608,55 @@ func (i *ZooKeeperHALock) monitorLock(lockeventCh <-chan zk.Event, leaderCh chan
 	}
 }
 
-func (i *ZooKeeperHALock) Unlock() error {
+func (i *ZooKeeperHALock) unlockInternal() error {
 	i.localLock.Lock()
 	defer i.localLock.Unlock()
 	if !i.held {
 		return nil
 	}
 
-	i.held = false
-	i.zkLock.Unlock()
-	return nil
+	err := i.zkLock.Unlock()
+
+	if err == nil {
+		i.held = false
+		return nil
+	}
+
+	return err
+}
+
+func (i *ZooKeeperHALock) Unlock() error {
+	var err error
+
+	if err = i.unlockInternal(); err != nil {
+		i.logger.Error("failed to release distributed lock", "error", err)
+
+		go func(i *ZooKeeperHALock) {
+			attempts := 0
+			i.logger.Info("launching automated distributed lock release")
+
+			for {
+				if err := i.unlockInternal(); err == nil {
+					i.logger.Info("distributed lock released")
+					return
+				}
+
+				select {
+				case <-time.After(time.Second):
+					attempts := attempts + 1
+					if attempts >= 10 {
+						i.logger.Error("release lock max attempts reached. Lock may not be released", "error", err)
+						return
+					}
+					continue
+				case <-i.stopCh:
+					return
+				}
+			}
+		}(i)
+	}
+
+	return err
 }
 
 func (i *ZooKeeperHALock) Value() (bool, string, error) {

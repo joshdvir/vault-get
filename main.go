@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	vaultapi "github.com/hashicorp/vault/api"
 	"github.com/urfave/cli"
@@ -114,7 +115,7 @@ func main() {
 
 		output := "export "
 		for vkey, vvalue := range vaultSecret.Data {
-			output += vkey + "=" + vvalue.(string) + " "
+			output += vkey + "=" + strings.Replace(fmt.Sprint(vvalue), " ", "", -1) + " "
 		}
 		fmt.Printf(output)
 		return nil

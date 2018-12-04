@@ -1,17 +1,19 @@
 package plugin
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"testing"
 
-	"github.com/hashicorp/vault/helper/logformat"
+	log "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/vault/helper/logging"
 	"github.com/hashicorp/vault/helper/pluginutil"
 	vaulthttp "github.com/hashicorp/vault/http"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/plugin"
 	"github.com/hashicorp/vault/logical/plugin/mock"
 	"github.com/hashicorp/vault/vault"
-	log "github.com/mgutz/logxi/v1"
 )
 
 func TestBackend_impl(t *testing.T) {
@@ -22,7 +24,7 @@ func TestBackend(t *testing.T) {
 	config, cleanup := testConfig(t)
 	defer cleanup()
 
-	_, err := Backend(config)
+	_, err := Backend(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,14 +34,15 @@ func TestBackend_Factory(t *testing.T) {
 	config, cleanup := testConfig(t)
 	defer cleanup()
 
-	_, err := Factory(config)
+	_, err := Factory(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestBackend_PluginMain(t *testing.T) {
-	if os.Getenv(pluginutil.PluginUnwrapTokenEnv) == "" {
+	args := []string{}
+	if os.Getenv(pluginutil.PluginUnwrapTokenEnv) == "" && os.Getenv(pluginutil.PluginMetadataModeEnv) != "true" {
 		return
 	}
 
@@ -48,7 +51,7 @@ func TestBackend_PluginMain(t *testing.T) {
 		t.Fatal("CA cert not passed in")
 	}
 
-	args := []string{"--ca-cert=" + caPEM}
+	args = append(args, fmt.Sprintf("--ca-cert=%s", caPEM))
 
 	apiClientMeta := &pluginutil.APIClientMeta{}
 	flags := apiClientMeta.FlagSet()
@@ -77,7 +80,7 @@ func testConfig(t *testing.T) (*logical.BackendConfig, func()) {
 	sys := vault.TestDynamicSystemView(core.Core)
 
 	config := &logical.BackendConfig{
-		Logger: logformat.NewVaultLogger(log.LevelTrace),
+		Logger: logging.NewVaultLogger(log.Debug),
 		System: sys,
 		Config: map[string]string{
 			"plugin_name": "mock-plugin",
@@ -86,7 +89,7 @@ func testConfig(t *testing.T) (*logical.BackendConfig, func()) {
 
 	os.Setenv(pluginutil.PluginCACertPEMEnv, cluster.CACertPEMFile)
 
-	vault.TestAddTestPlugin(t, core.Core, "mock-plugin", "TestBackend_PluginMain")
+	vault.TestAddTestPlugin(t, core.Core, "mock-plugin", "TestBackend_PluginMain", []string{}, "")
 
 	return config, func() {
 		cluster.Cleanup()

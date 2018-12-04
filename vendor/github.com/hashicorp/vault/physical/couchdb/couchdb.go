@@ -2,6 +2,7 @@ package couchdb
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -15,8 +16,8 @@ import (
 	"github.com/armon/go-metrics"
 	"github.com/hashicorp/errwrap"
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
+	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/physical"
-	log "github.com/mgutz/logxi/v1"
 )
 
 // CouchDBBackend allows the management of couchdb users
@@ -25,6 +26,11 @@ type CouchDBBackend struct {
 	client     *couchDBClient
 	permitPool *physical.PermitPool
 }
+
+// Verify CouchDBBackend satisfies the correct interfaces
+var _ physical.Backend = (*CouchDBBackend)(nil)
+var _ physical.PseudoTransactional = (*CouchDBBackend)(nil)
+var _ physical.PseudoTransactional = (*TransactionalCouchDBBackend)(nil)
 
 type couchDBClient struct {
 	endpoint string
@@ -99,7 +105,7 @@ func (m *couchDBClient) get(key string) (*physical.Entry, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	} else if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET returned %s", resp.Status)
+		return nil, fmt.Errorf("GET returned %q", resp.Status)
 	}
 	bs, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -117,7 +123,6 @@ func (m *couchDBClient) list(prefix string) ([]couchDBListItem, error) {
 	req.SetBasicAuth(m.username, m.password)
 	values := req.URL.Query()
 	values.Set("skip", "0")
-	values.Set("limit", "100")
 	values.Set("include_docs", "false")
 	if prefix != "" {
 		values.Set("startkey", fmt.Sprintf("%q", prefix))
@@ -172,7 +177,7 @@ func buildCouchDBBackend(conf map[string]string, logger log.Logger) (*CouchDBBac
 			return nil, errwrap.Wrapf("failed parsing max_parallel parameter: {{err}}", err)
 		}
 		if logger.IsDebug() {
-			logger.Debug("couchdb: max_parallel set", "max_parallel", maxParInt)
+			logger.Debug("max_parallel set", "max_parallel", maxParInt)
 		}
 	}
 
@@ -200,31 +205,31 @@ type couchDBEntry struct {
 }
 
 // Put is used to insert or update an entry
-func (m *CouchDBBackend) Put(entry *physical.Entry) error {
+func (m *CouchDBBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	m.permitPool.Acquire()
 	defer m.permitPool.Release()
 
-	return m.PutInternal(entry)
+	return m.PutInternal(ctx, entry)
 }
 
 // Get is used to fetch an entry
-func (m *CouchDBBackend) Get(key string) (*physical.Entry, error) {
+func (m *CouchDBBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	m.permitPool.Acquire()
 	defer m.permitPool.Release()
 
-	return m.GetInternal(key)
+	return m.GetInternal(ctx, key)
 }
 
 // Delete is used to permanently delete an entry
-func (m *CouchDBBackend) Delete(key string) error {
+func (m *CouchDBBackend) Delete(ctx context.Context, key string) error {
 	m.permitPool.Acquire()
 	defer m.permitPool.Release()
 
-	return m.DeleteInternal(key)
+	return m.DeleteInternal(ctx, key)
 }
 
 // List is used to list all the keys under a given prefix
-func (m *CouchDBBackend) List(prefix string) ([]string, error) {
+func (m *CouchDBBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"couchdb", "list"}, time.Now())
 
 	m.permitPool.Acquire()
@@ -272,14 +277,14 @@ func NewTransactionalCouchDBBackend(conf map[string]string, logger log.Logger) (
 }
 
 // GetInternal is used to fetch an entry
-func (m *CouchDBBackend) GetInternal(key string) (*physical.Entry, error) {
+func (m *CouchDBBackend) GetInternal(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"couchdb", "get"}, time.Now())
 
 	return m.client.get(key)
 }
 
 // PutInternal is used to insert or update an entry
-func (m *CouchDBBackend) PutInternal(entry *physical.Entry) error {
+func (m *CouchDBBackend) PutInternal(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"couchdb", "put"}, time.Now())
 
 	revision, _ := m.client.rev(url.PathEscape(entry.Key))
@@ -292,7 +297,7 @@ func (m *CouchDBBackend) PutInternal(entry *physical.Entry) error {
 }
 
 // DeleteInternal is used to permanently delete an entry
-func (m *CouchDBBackend) DeleteInternal(key string) error {
+func (m *CouchDBBackend) DeleteInternal(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"couchdb", "delete"}, time.Now())
 
 	revision, _ := m.client.rev(url.PathEscape(key))

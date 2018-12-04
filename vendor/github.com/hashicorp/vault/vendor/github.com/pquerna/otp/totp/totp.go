@@ -18,6 +18,8 @@
 package totp
 
 import (
+	"strings"
+
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/hotp"
 
@@ -134,7 +136,7 @@ type GenerateOpts struct {
 	AccountName string
 	// Number of seconds a TOTP hash is valid for. Defaults to 30 seconds.
 	Period uint
-	// Size in size of the generated Secret. Defaults to 10 bytes.
+	// Size in size of the generated Secret. Defaults to 20 bytes.
 	SecretSize uint
 	// Digits to request. Defaults to 6.
 	Digits otp.Digits
@@ -158,7 +160,7 @@ func Generate(opts GenerateOpts) (*otp.Key, error) {
 	}
 
 	if opts.SecretSize == 0 {
-		opts.SecretSize = 10
+		opts.SecretSize = 20
 	}
 
 	if opts.Digits == 0 {
@@ -174,7 +176,7 @@ func Generate(opts GenerateOpts) (*otp.Key, error) {
 		return nil, err
 	}
 
-	v.Set("secret", base32.StdEncoding.EncodeToString(secret))
+	v.Set("secret", strings.TrimRight(base32.StdEncoding.EncodeToString(secret), "="))
 	v.Set("issuer", opts.Issuer)
 	v.Set("period", strconv.FormatUint(uint64(opts.Period), 10))
 	v.Set("algorithm", opts.Algorithm.String())

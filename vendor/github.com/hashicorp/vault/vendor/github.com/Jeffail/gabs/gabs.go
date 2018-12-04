@@ -24,6 +24,7 @@ THE SOFTWARE.
 package gabs
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -308,6 +309,57 @@ func (g *Container) DeleteP(path string) error {
 	return g.Delete(strings.Split(path, ".")...)
 }
 
+// Merge - Merges two gabs-containers
+func (g *Container) Merge(toMerge *Container) error {
+	var recursiveFnc func(map[string]interface{}, []string) error
+	recursiveFnc = func(mmap map[string]interface{}, path []string) error {
+		for key, value := range mmap {
+			newPath := append(path, key)
+			if g.Exists(newPath...) {
+				target := g.Search(newPath...)
+				switch t := value.(type) {
+				case map[string]interface{}:
+					switch targetV := target.Data().(type) {
+					case map[string]interface{}:
+						if err := recursiveFnc(t, newPath); err != nil {
+							return err
+						}
+					case []interface{}:
+						g.Set(append(targetV, t), newPath...)
+					default:
+						newSlice := append([]interface{}{}, targetV)
+						g.Set(append(newSlice, t), newPath...)
+					}
+				case []interface{}:
+					for _, valueOfSlice := range t {
+						if err := g.ArrayAppend(valueOfSlice, newPath...); err != nil {
+							return err
+						}
+					}
+				default:
+					switch targetV := target.Data().(type) {
+					case []interface{}:
+						g.Set(append(targetV, t), newPath...)
+					default:
+						newSlice := append([]interface{}{}, targetV)
+						g.Set(append(newSlice, t), newPath...)
+					}
+				}
+			} else {
+				// path doesn't exist. So set the value
+				if _, err := g.Set(value, newPath...); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if mmap, ok := toMerge.Data().(map[string]interface{}); ok {
+		return recursiveFnc(mmap, []string{})
+	}
+	return nil
+}
+
 //--------------------------------------------------------------------------------------------------
 
 /*
@@ -315,14 +367,20 @@ Array modification/search - Keeping these options simple right now, no need for 
 complicated since you can just cast to []interface{}, modify and then reassign with Set.
 */
 
-// ArrayAppend - Append a value onto a JSON array.
+// ArrayAppend - Append a value onto a JSON array. If the target is not a JSON array then it will be
+// converted into one, with its contents as the first element of the array.
 func (g *Container) ArrayAppend(value interface{}, path ...string) error {
-	array, ok := g.Search(path...).Data().([]interface{})
-	if !ok {
-		return ErrNotArray
+	if array, ok := g.Search(path...).Data().([]interface{}); ok {
+		array = append(array, value)
+		_, err := g.Set(array, path...)
+		return err
 	}
-	array = append(array, value)
-	_, err := g.Set(array, path...)
+
+	newArray := []interface{}{}
+	newArray = append(newArray, g.Search(path...).Data())
+	newArray = append(newArray, value)
+
+	_, err := g.Set(newArray, path...)
 	return err
 }
 
@@ -417,6 +475,44 @@ func (g *Container) String() string {
 // StringIndent - Converts the contained object back to a JSON formatted string with prefix, indent.
 func (g *Container) StringIndent(prefix string, indent string) string {
 	return string(g.BytesIndent(prefix, indent))
+}
+
+// EncodeOpt is a functional option for the EncodeJSON method.
+type EncodeOpt func(e *json.Encoder)
+
+// EncodeOptHTMLEscape sets the encoder to escape the JSON for html.
+func EncodeOptHTMLEscape(doEscape bool) EncodeOpt {
+	return func(e *json.Encoder) {
+		e.SetEscapeHTML(doEscape)
+	}
+}
+
+// EncodeOptIndent sets the encoder to indent the JSON output.
+func EncodeOptIndent(prefix string, indent string) EncodeOpt {
+	return func(e *json.Encoder) {
+		e.SetIndent(prefix, indent)
+	}
+}
+
+// EncodeJSON - Encodes the contained object back to a JSON formatted []byte
+// using a variant list of modifier functions for the encoder being used.
+// Functions for modifying the output are prefixed with EncodeOpt, e.g.
+// EncodeOptHTMLEscape.
+func (g *Container) EncodeJSON(encodeOpts ...EncodeOpt) []byte {
+	var b bytes.Buffer
+	encoder := json.NewEncoder(&b)
+	encoder.SetEscapeHTML(false) // Do not escape by default.
+	for _, opt := range encodeOpts {
+		opt(encoder)
+	}
+	if err := encoder.Encode(g.object); err != nil {
+		return []byte("{}")
+	}
+	result := b.Bytes()
+	if len(result) > 0 {
+		result = result[:len(result)-1]
+	}
+	return result
 }
 
 // New - Create a new gabs JSON object.

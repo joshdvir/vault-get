@@ -28,6 +28,8 @@ type NodeInfo struct {
 
 	FdUsed        int  `json:"fd_used"`
 	FdTotal       int  `json:"fd_total"`
+	ProcUsed      int  `json:"proc_used"`
+	ProcTotal     int  `json:"proc_total"`
 	SocketsUsed   int  `json:"sockets_used"`
 	SocketsTotal  int  `json:"sockets_total"`
 	MemUsed       int  `json:"mem_used"`
@@ -46,6 +48,8 @@ type NodeInfo struct {
 	AuthMechanisms []AuthMechanism `json:"auth_mechanisms"`
 	ErlangApps     []ErlangApp     `json:"applications"`
 	Contexts       []BrokerContext `json:"contexts"`
+
+	Partitions []string `json:"partitions"`
 }
 
 //

@@ -2,14 +2,16 @@ package dockertest
 
 import (
 	"fmt"
+	"io/ioutil"
+	"net"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
-	"strings"
-
-	"github.com/cenk/backoff"
-	dc "github.com/fsouza/go-dockerclient"
+	"github.com/cenkalti/backoff"
+	dc "github.com/ory/dockertest/docker"
 	"github.com/pkg/errors"
 )
 
@@ -21,6 +23,7 @@ type Pool struct {
 
 // Resource represents a docker container.
 type Resource struct {
+	pool      *Pool
 	Container *dc.Container
 }
 
@@ -42,6 +45,59 @@ func (r *Resource) GetPort(id string) string {
 	return m[0].HostPort
 }
 
+func (r *Resource) GetBoundIP(id string) string {
+	if r.Container == nil {
+		return ""
+	} else if r.Container.NetworkSettings == nil {
+		return ""
+	}
+
+	m, ok := r.Container.NetworkSettings.Ports[dc.Port(id)]
+	if !ok {
+		return ""
+	} else if len(m) == 0 {
+		return ""
+	}
+
+	return m[0].HostIP
+}
+
+// GetHostPort returns a resource's published port with an address.
+func (r *Resource) GetHostPort(portID string) string {
+	if r.Container == nil {
+		return ""
+	} else if r.Container.NetworkSettings == nil {
+		return ""
+	}
+
+	m, ok := r.Container.NetworkSettings.Ports[dc.Port(portID)]
+	if !ok {
+		return ""
+	} else if len(m) == 0 {
+		return ""
+	}
+	ip := m[0].HostIP
+	if ip == "0.0.0.0" {
+		ip = "localhost"
+	}
+	return net.JoinHostPort(ip, m[0].HostPort)
+}
+
+// Close removes a container and linked volumes from docker by calling pool.Purge.
+func (r *Resource) Close() error {
+	return r.pool.Purge(r)
+}
+
+// Expire sets a resource's associated container to terminate after a period has passed
+func (r *Resource) Expire(seconds uint) error {
+	go func() {
+		if err := r.pool.Client.StopContainer(r.Container.ID, seconds); err != nil {
+			// Error handling?
+		}
+	}()
+	return nil
+}
+
 // NewTLSPool creates a new pool given an endpoint and the certificate path. This is required for endpoints that
 // require TLS communication.
 func NewTLSPool(endpoint, certpath string) (*Pool, error) {
@@ -60,24 +116,31 @@ func NewTLSPool(endpoint, certpath string) (*Pool, error) {
 }
 
 // NewPool creates a new pool. You can pass an empty string to use the default, which is taken from the environment
-// variable DOCKER_URL, or from docker-machine if the environment variable DOCKER_MACHINE_NAME is set,
+// variable DOCKER_HOST and DOCKER_URL, or from docker-machine if the environment variable DOCKER_MACHINE_NAME is set,
 // or if neither is defined a sensible default for the operating system you are on.
+// TLS pools are automatically configured if the DOCKER_CERT_PATH environment variable exists.
 func NewPool(endpoint string) (*Pool, error) {
 	if endpoint == "" {
-		if os.Getenv("DOCKER_URL") != "" {
-			endpoint = os.Getenv("DOCKER_URL")
-		} else if os.Getenv("DOCKER_MACHINE_NAME") != "" {
+		if os.Getenv("DOCKER_MACHINE_NAME") != "" {
 			client, err := dc.NewClientFromEnv()
 			if err != nil {
-				return nil, errors.Wrap(err, "")
+				return nil, errors.Wrap(err, "failed to create client from environment")
 			}
 
 			return &Pool{Client: client}, nil
+		} else if os.Getenv("DOCKER_HOST") != "" {
+			endpoint = os.Getenv("DOCKER_HOST")
+		} else if os.Getenv("DOCKER_URL") != "" {
+			endpoint = os.Getenv("DOCKER_URL")
 		} else if runtime.GOOS == "windows" {
 			endpoint = "http://localhost:2375"
 		} else {
 			endpoint = "unix:///var/run/docker.sock"
 		}
+	}
+
+	if os.Getenv("DOCKER_CERT_PATH") != "" && shouldPreferTls(endpoint) {
+		return NewTLSPool(endpoint, os.Getenv("DOCKER_CERT_PATH"))
 	}
 
 	client, err := dc.NewClient(endpoint)
@@ -90,8 +153,14 @@ func NewPool(endpoint string) (*Pool, error) {
 	}, nil
 }
 
+func shouldPreferTls(endpoint string) bool {
+	return !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "unix://")
+}
+
 // RunOptions is used to pass in optional parameters when running a container.
 type RunOptions struct {
+	Hostname     string
+	Name         string
 	Repository   string
 	Tag          string
 	Env          []string
@@ -100,6 +169,41 @@ type RunOptions struct {
 	Mounts       []string
 	Links        []string
 	ExposedPorts []string
+	ExtraHosts   []string
+	CapAdd       []string
+	SecurityOpt  []string
+	WorkingDir   string
+	NetworkID    string
+	Labels       map[string]string
+	Auth         dc.AuthConfiguration
+	PortBindings map[dc.Port][]dc.PortBinding
+	Privileged   bool
+}
+
+// BuildAndRunWithOptions builds and starts a docker container
+func (d *Pool) BuildAndRunWithOptions(dockerfilePath string, opts *RunOptions) (*Resource, error) {
+	// Set the Dockerfile folder as build context
+	dir, file := filepath.Split(dockerfilePath)
+
+	err := d.Client.BuildImage(dc.BuildImageOptions{
+		Name:         opts.Name,
+		Dockerfile:   file,
+		OutputStream: ioutil.Discard,
+		ContextDir:   dir,
+	})
+
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+
+	opts.Repository = opts.Name
+
+	return d.RunWithOptions(opts)
+}
+
+// BuildAndRun builds and starts a docker container
+func (d *Pool) BuildAndRun(name, dockerfilePath string, env []string) (*Resource, error) {
+	return d.BuildAndRunWithOptions(dockerfilePath, &RunOptions{Name: name, Env: env})
 }
 
 // RunWithOptions starts a docker container.
@@ -111,6 +215,7 @@ func (d *Pool) RunWithOptions(opts *RunOptions) (*Resource, error) {
 	env := opts.Env
 	cmd := opts.Cmd
 	ep := opts.Entrypoint
+	wd := opts.WorkingDir
 	var exp map[dc.Port]struct{}
 
 	if len(opts.ExposedPorts) > 0 {
@@ -139,30 +244,48 @@ func (d *Pool) RunWithOptions(opts *RunOptions) (*Resource, error) {
 		tag = "latest"
 	}
 
+	networkingConfig := dc.NetworkingConfig{
+		EndpointsConfig: map[string]*dc.EndpointConfig{},
+	}
+	if opts.NetworkID != "" {
+		networkingConfig.EndpointsConfig[opts.NetworkID] = &dc.EndpointConfig{}
+	}
+
 	_, err := d.Client.InspectImage(fmt.Sprintf("%s:%s", repository, tag))
 	if err != nil {
 		if err := d.Client.PullImage(dc.PullImageOptions{
 			Repository: repository,
 			Tag:        tag,
-		}, dc.AuthConfiguration{}); err != nil {
+		}, opts.Auth); err != nil {
 			return nil, errors.Wrap(err, "")
 		}
 	}
 
 	c, err := d.Client.CreateContainer(dc.CreateContainerOptions{
+		Name: opts.Name,
 		Config: &dc.Config{
+			Hostname:     opts.Hostname,
 			Image:        fmt.Sprintf("%s:%s", repository, tag),
 			Env:          env,
 			Entrypoint:   ep,
 			Cmd:          cmd,
 			Mounts:       mounts,
 			ExposedPorts: exp,
+			WorkingDir:   wd,
+			Labels:       opts.Labels,
+			StopSignal:   "SIGWINCH", // to support timeouts
 		},
 		HostConfig: &dc.HostConfig{
 			PublishAllPorts: true,
 			Binds:           opts.Mounts,
 			Links:           opts.Links,
+			PortBindings:    opts.PortBindings,
+			ExtraHosts:      opts.ExtraHosts,
+			CapAdd:          opts.CapAdd,
+			SecurityOpt:     opts.SecurityOpt,
+			Privileged:      opts.Privileged,
 		},
+		NetworkingConfig: &networkingConfig,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "")
@@ -178,6 +301,7 @@ func (d *Pool) RunWithOptions(opts *RunOptions) (*Resource, error) {
 	}
 
 	return &Resource{
+		pool:      d,
 		Container: c,
 	}, nil
 }
@@ -191,10 +315,6 @@ func (d *Pool) Run(repository, tag string, env []string) (*Resource, error) {
 
 // Purge removes a container and linked volumes from docker.
 func (d *Pool) Purge(r *Resource) error {
-	if err := d.Client.KillContainer(dc.KillContainerOptions{ID: r.Container.ID}); err != nil {
-		return errors.Wrap(err, "")
-	}
-
 	if err := d.Client.RemoveContainer(dc.RemoveContainerOptions{ID: r.Container.ID, Force: true, RemoveVolumes: true}); err != nil {
 		return errors.Wrap(err, "")
 	}

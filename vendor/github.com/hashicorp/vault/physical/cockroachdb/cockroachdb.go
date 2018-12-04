@@ -1,6 +1,7 @@
 package cockroachdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sort"
@@ -11,13 +12,17 @@ import (
 	"github.com/armon/go-metrics"
 	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/hashicorp/errwrap"
+	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/helper/strutil"
 	"github.com/hashicorp/vault/physical"
-	log "github.com/mgutz/logxi/v1"
 
 	// CockroachDB uses the Postgres SQL driver
 	_ "github.com/lib/pq"
 )
+
+// Verify CockroachDBBackend satisfies the correct interfaces
+var _ physical.Backend = (*CockroachDBBackend)(nil)
+var _ physical.Transactional = (*CockroachDBBackend)(nil)
 
 // CockroachDBBackend Backend is a physical backend that stores data
 // within a CockroachDB database.
@@ -53,21 +58,21 @@ func NewCockroachDBBackend(conf map[string]string, logger log.Logger) (physical.
 			return nil, errwrap.Wrapf("failed parsing max_parallel parameter: {{err}}", err)
 		}
 		if logger.IsDebug() {
-			logger.Debug("cockroachdb: max_parallel set", "max_parallel", maxParInt)
+			logger.Debug("max_parallel set", "max_parallel", maxParInt)
 		}
 	}
 
 	// Create CockroachDB handle for the database.
 	db, err := sql.Open("postgres", connURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to cockroachdb: %v", err)
+		return nil, errwrap.Wrapf("failed to connect to cockroachdb: {{err}}", err)
 	}
 
 	// Create the required table if it doesn't exists.
 	createQuery := "CREATE TABLE IF NOT EXISTS " + dbTable +
 		" (path STRING, value BYTES, PRIMARY KEY (path))"
 	if _, err := db.Exec(createQuery); err != nil {
-		return nil, fmt.Errorf("failed to create mysql table: %v", err)
+		return nil, errwrap.Wrapf("failed to create mysql table: {{err}}", err)
 	}
 
 	// Setup the backend
@@ -100,14 +105,14 @@ func NewCockroachDBBackend(conf map[string]string, logger log.Logger) (physical.
 func (c *CockroachDBBackend) prepare(name, query string) error {
 	stmt, err := c.client.Prepare(query)
 	if err != nil {
-		return fmt.Errorf("failed to prepare '%s': %v", name, err)
+		return errwrap.Wrapf(fmt.Sprintf("failed to prepare %q: {{err}}", name), err)
 	}
 	c.statements[name] = stmt
 	return nil
 }
 
 // Put is used to insert or update an entry.
-func (c *CockroachDBBackend) Put(entry *physical.Entry) error {
+func (c *CockroachDBBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"cockroachdb", "put"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -121,7 +126,7 @@ func (c *CockroachDBBackend) Put(entry *physical.Entry) error {
 }
 
 // Get is used to fetch and entry.
-func (c *CockroachDBBackend) Get(key string) (*physical.Entry, error) {
+func (c *CockroachDBBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"cockroachdb", "get"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -144,7 +149,7 @@ func (c *CockroachDBBackend) Get(key string) (*physical.Entry, error) {
 }
 
 // Delete is used to permanently delete an entry
-func (c *CockroachDBBackend) Delete(key string) error {
+func (c *CockroachDBBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"cockroachdb", "delete"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -159,7 +164,7 @@ func (c *CockroachDBBackend) Delete(key string) error {
 
 // List is used to list all the keys under a given
 // prefix, up to the next prefix.
-func (c *CockroachDBBackend) List(prefix string) ([]string, error) {
+func (c *CockroachDBBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"cockroachdb", "list"}, time.Now())
 
 	c.permitPool.Acquire()
@@ -177,7 +182,7 @@ func (c *CockroachDBBackend) List(prefix string) ([]string, error) {
 		var key string
 		err = rows.Scan(&key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan rows: %v", err)
+			return nil, errwrap.Wrapf("failed to scan rows: {{err}}", err)
 		}
 
 		key = strings.TrimPrefix(key, prefix)
@@ -195,7 +200,7 @@ func (c *CockroachDBBackend) List(prefix string) ([]string, error) {
 }
 
 // Transaction is used to run multiple entries via a transaction
-func (c *CockroachDBBackend) Transaction(txns []physical.TxnEntry) error {
+func (c *CockroachDBBackend) Transaction(ctx context.Context, txns []*physical.TxnEntry) error {
 	defer metrics.MeasureSince([]string{"cockroachdb", "transaction"}, time.Now())
 	if len(txns) == 0 {
 		return nil
@@ -204,12 +209,12 @@ func (c *CockroachDBBackend) Transaction(txns []physical.TxnEntry) error {
 	c.permitPool.Acquire()
 	defer c.permitPool.Release()
 
-	return crdb.ExecuteTx(c.client, func(tx *sql.Tx) error {
+	return crdb.ExecuteTx(context.Background(), c.client, nil, func(tx *sql.Tx) error {
 		return c.transaction(tx, txns)
 	})
 }
 
-func (c *CockroachDBBackend) transaction(tx *sql.Tx, txns []physical.TxnEntry) error {
+func (c *CockroachDBBackend) transaction(tx *sql.Tx, txns []*physical.TxnEntry) error {
 	deleteStmt, err := tx.Prepare(c.rawStatements["delete"])
 	if err != nil {
 		return err

@@ -1,6 +1,7 @@
 package cassandra
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
@@ -9,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/mgutz/logxi/v1"
+	"github.com/hashicorp/errwrap"
+	log "github.com/hashicorp/go-hclog"
 
 	"github.com/armon/go-metrics"
 	"github.com/gocql/gocql"
@@ -24,6 +26,9 @@ type CassandraBackend struct {
 
 	logger log.Logger
 }
+
+// Verify CassandraBackend satisfies the correct interfaces
+var _ physical.Backend = (*CassandraBackend)(nil)
 
 // NewCassandraBackend constructs a Cassandra backend using a pre-existing
 // keyspace and table.
@@ -110,7 +115,7 @@ func NewCassandraBackend(conf map[string]string, logger log.Logger) (physical.Ba
 
 	if username, ok := conf["username"]; ok {
 		if cluster.ProtoVersion < 2 {
-			return nil, fmt.Errorf("Authentication is not supported with protocol version < 2")
+			return nil, fmt.Errorf("authentication is not supported with protocol version < 2")
 		}
 		authenticator := gocql.PasswordAuthenticator{Username: username}
 		if password, ok := conf["password"]; ok {
@@ -141,7 +146,8 @@ func NewCassandraBackend(conf map[string]string, logger log.Logger) (physical.Ba
 	impl := &CassandraBackend{
 		sess:   sess,
 		table:  table,
-		logger: logger}
+		logger: logger,
+	}
 	return impl, nil
 }
 
@@ -164,11 +170,11 @@ func setupCassandraTLS(conf map[string]string, cluster *gocql.ClusterConfig) err
 	if pemBundlePath, ok := conf["pem_bundle_file"]; ok {
 		pemBundleData, err := ioutil.ReadFile(pemBundlePath)
 		if err != nil {
-			return fmt.Errorf("Error reading pem bundle from %s: %v", pemBundlePath, err)
+			return errwrap.Wrapf(fmt.Sprintf("error reading pem bundle from %q: {{err}}", pemBundlePath), err)
 		}
 		pemBundle, err := certutil.ParsePEMBundle(string(pemBundleData))
 		if err != nil {
-			return fmt.Errorf("Error parsing 'pem_bundle': %v", err)
+			return errwrap.Wrapf("error parsing 'pem_bundle': {{err}}", err)
 		}
 		tlsConfig, err = pemBundle.GetTLSConfig(certutil.TLSClient)
 		if err != nil {
@@ -178,7 +184,7 @@ func setupCassandraTLS(conf map[string]string, cluster *gocql.ClusterConfig) err
 		if pemJSONPath, ok := conf["pem_json_file"]; ok {
 			pemJSONData, err := ioutil.ReadFile(pemJSONPath)
 			if err != nil {
-				return fmt.Errorf("Error reading json bundle from %s: %v", pemJSONPath, err)
+				return errwrap.Wrapf(fmt.Sprintf("error reading json bundle from %q: {{err}}", pemJSONPath), err)
 			}
 			pemJSON, err := certutil.ParsePKIJSON([]byte(pemJSONData))
 			if err != nil {
@@ -245,7 +251,7 @@ func (c *CassandraBackend) bucket(key string) string {
 }
 
 // Put is used to insert or update an entry
-func (c *CassandraBackend) Put(entry *physical.Entry) error {
+func (c *CassandraBackend) Put(ctx context.Context, entry *physical.Entry) error {
 	defer metrics.MeasureSince([]string{"cassandra", "put"}, time.Now())
 
 	// Execute inserts to each key prefix simultaneously
@@ -266,7 +272,7 @@ func (c *CassandraBackend) Put(entry *physical.Entry) error {
 }
 
 // Get is used to fetch an entry
-func (c *CassandraBackend) Get(key string) (*physical.Entry, error) {
+func (c *CassandraBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
 	defer metrics.MeasureSince([]string{"cassandra", "get"}, time.Now())
 
 	v := []byte(nil)
@@ -286,22 +292,30 @@ func (c *CassandraBackend) Get(key string) (*physical.Entry, error) {
 }
 
 // Delete is used to permanently delete an entry
-func (c *CassandraBackend) Delete(key string) error {
+func (c *CassandraBackend) Delete(ctx context.Context, key string) error {
 	defer metrics.MeasureSince([]string{"cassandra", "delete"}, time.Now())
 
 	stmt := fmt.Sprintf(`DELETE FROM "%s" WHERE bucket = ? AND key = ?`, c.table)
-	batch := gocql.NewBatch(gocql.LoggedBatch)
-	for _, bucket := range c.buckets(key) {
-		batch.Entries = append(batch.Entries, gocql.BatchEntry{
-			Stmt: stmt,
-			Args: []interface{}{bucket, key}})
+	results := make(chan error)
+	buckets := c.buckets(key)
+
+	for _, bucket := range buckets {
+		go func(bucket string) {
+			results <- c.sess.Query(stmt, bucket, key).Exec()
+		}(bucket)
 	}
-	return c.sess.ExecuteBatch(batch)
+
+	for i := 0; i < len(buckets); i++ {
+		if err := <-results; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // List is used ot list all the keys under a given
 // prefix, up to the next prefix.
-func (c *CassandraBackend) List(prefix string) ([]string, error) {
+func (c *CassandraBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	defer metrics.MeasureSince([]string{"cassandra", "list"}, time.Now())
 
 	stmt := fmt.Sprintf(`SELECT key FROM "%s" WHERE bucket = ?`, c.table)

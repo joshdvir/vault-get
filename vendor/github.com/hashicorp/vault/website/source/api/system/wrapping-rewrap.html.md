@@ -1,7 +1,8 @@
 ---
 layout: "api"
 page_title: "/sys/wrapping/rewrap - HTTP API"
-sidebar_current: "docs-http-system-wrapping-rewrap"
+sidebar_title: "<tt>/sys/wrapping/rewrap</tt>"
+sidebar_current: "api-http-system-wrapping-rewrap"
 description: |-
   The `/sys/wrapping/rewrap` endpoint can be used to rotate a wrapping token and refresh its TTL.
 ---
@@ -41,7 +42,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://vault.rocks/v1/sys/wrapping/lookup
+    http://127.0.0.1:8200/v1/sys/wrapping/lookup
 ```
 
 ### Sample Response
