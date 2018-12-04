@@ -14,7 +14,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "vault-get"
 	app.Usage = "Get a value from Vault"
-	app.Version = fmt.Sprintf("0.6.0")
+	app.Version = fmt.Sprintf("0.7.0")
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "vault_host",

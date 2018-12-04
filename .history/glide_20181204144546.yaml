@@ -1,8 +1,0 @@
-package: .
-import:
-- package: github.com/urfave/cli
-- package: github.com/jeremywohl/flatten
-- package: github.com/hashicorp/vault
-  version: ^0.8.1
-  subpackages:
-  - api
