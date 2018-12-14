@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"encoding/json"
+	"reflect"
 
 	vaultapi "github.com/hashicorp/vault/api"
 	"github.com/urfave/cli"
@@ -14,7 +16,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "vault-get"
 	app.Usage = "Get a value from Vault"
-	app.Version = fmt.Sprintf("0.7.0")
+	app.Version = fmt.Sprintf("0.8.0")
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "vault_host",
@@ -115,7 +117,12 @@ func main() {
 
 		output := "export "
 		for vkey, vvalue := range vaultSecret.Data {
-			output += vkey + "=" + strings.Replace(fmt.Sprint(vvalue), " ", "", -1) + " "
+			if reflect.ValueOf(vvalue).Kind() == reflect.Slice {
+				json, _ := json.Marshal(vvalue)
+				output += vkey + "='" + string(json) + "' "
+			} else {
+				output += vkey + "='" + strings.Replace(fmt.Sprint(vvalue), " ", "", -1) + "' "
+			}
 		}
 		fmt.Printf(output)
 		return nil
