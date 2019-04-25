@@ -16,7 +16,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "vault-get"
 	app.Usage = "Get a value from Vault"
-	app.Version = fmt.Sprintf("0.8.0")
+	app.Version = fmt.Sprintf("1.0.0")
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "vault_host",
@@ -113,6 +113,19 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error reading from vault: %s", err)
 			os.Exit(1)
+		}
+
+		health, err := client.Sys().Health()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading vault health: %s", err)
+			os.Exit(1)
+		}
+
+		if strings.HasPrefix(health.Version, "1") {
+			v := vaultSecret.Data["data"]
+			if data, ok := v.(map[string]interface{}); ok {
+				vaultSecret.Data = data
+			}
 		}
 
 		output := "export "
