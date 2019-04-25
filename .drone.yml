@@ -59,6 +59,9 @@ steps:
     VERSION: 1.0.0
     github_token:
       from_secret: github_token
+  when:
+    event:
+    - tag
 
 ---
 kind: secret
