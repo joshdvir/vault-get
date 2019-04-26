@@ -16,6 +16,7 @@ steps:
   image: golang:1.11
   commands:
   - "apt-get update && apt-get install -y upx"
+  - mkdir -p /go/bin
   - mkdir -p prod
   - mkdir -p dist
   - "curl https://glide.sh/get | sh"
