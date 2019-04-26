@@ -6,6 +6,10 @@ platform:
   os: linux
   arch: amd64
 
+workspace:
+  base: /go
+  path: src/github.com/devops-israel/vault-get
+
 steps:
 - name: build
   pull: always
