@@ -43,5 +43,5 @@ steps:
 kind: secret
 name: github_token
 get:
-  path: drone/data/github
+  path: drone/data/github_devops
   name: token
