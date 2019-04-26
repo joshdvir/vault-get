@@ -1,4 +1,4 @@
-FROM golang:1.8
+FROM golang:1.11
 
 RUN mkdir -p /go/src/vault-get
 WORKDIR /go/src/vault-get
