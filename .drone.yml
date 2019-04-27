@@ -33,7 +33,7 @@ steps:
   - ghr -t $GITHUB_TOKEN --replace -u devops-israel -r vault-get v$VERSION dist/
   environment:
     VERSION: 1.0.0
-    github_token:
+    GITHUB_TOKEN:
       from_secret: github_token
   when:
     event:
